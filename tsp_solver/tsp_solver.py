@@ -2,6 +2,10 @@ from collections import deque
 import gurobipy as grb
 import math
 
+
+from dataset import Dataset
+
+
 class BranchAndCut(object):
 
     def __init__(self, initial_model):
@@ -26,8 +30,10 @@ class BranchAndCut(object):
             print('='*40)
 
             if self.solution_is_infeasible(model):
+                print('    INFEASIBLE')
                 continue
             if not self.solution_can_become_new_best(model):
+                print('    CANNOT BECOME BEST')
                 continue
 
             ## TODO: Add heuristic cuts here.
@@ -113,6 +119,47 @@ class BranchAndCut(object):
 
         return ''.join(lines)
 
+
+if __name__ == '__main__':
+    import sys
+
+    ##
+    ## Read the dataset
+    ##
+
+    filename         = sys.argv[1]
+    dataset          = Dataset(filename)
+    edges            = dataset.edges
+    nodes            = dataset.nodes
+    distance_by_edge = dataset.distance_by_edge
+
+    ##
+    ## Formulate the initial model, which consists of:
+    ##   - minimizing the sum of selected edges
+    ##   - the degree requirements for each node
+    ##   - the bounds on x_e (the decision variable)
+    ##
+    ##   min: sum_e(d_e*x_e)    for e in edges
+    ##   st:  sum_e(x_e) = 2    e in edges(n) for n in nodes
+    ##        0.0 <= x_e <= 1   for e in edges
+    ##
+
+    model          = grb.Model('tsp')
+    xx             = model.addVars(edges, lb=0.0, ub=1.0, vtype=grb.GRB.CONTINUOUS, name='xx', obj=distance_by_edge)
+    degree_constrs = model.addConstrs((xx.sum(node,'*') + xx.sum('*',node) == 2.0 for node in nodes), 'degree')
+    model.update()
+
+    ##
+    ## Solve the problem.
+    ##
+
+    bc = BranchAndCut(initial_model=model)
+    bc.solve()
+
+    import pdb; pdb.set_trace()
+    print('hello')
+
+
 # def print_info(model):
 #     # model.write('model.mps')
 #     print('=' * 40)
@@ -145,19 +192,19 @@ class BranchAndCut(object):
 #         print('  no optimum found')
 #     print('=' * 40)
 
-mm = grb.Model()
+# mm = grb.Model()
 
-vv = [1, 2]
+# vv = [1, 2]
 
-cost = {
-    1: -1.0,
-    2: -1.0,
-}
+# cost = {
+#     1: -1.0,
+#     2: -1.0,
+# }
 
-xx = mm.addVars(vv, name='x', obj=cost, vtype=grb.GRB.CONTINUOUS, lb=0.0)
-mm.addConstr(xx[1] + 2.0/3.0*xx[2] <= 5.0)
-mm.addConstr(-1./5.*xx[1] + xx[2] <= 2.0)
-mm.update()
+# xx = mm.addVars(vv, name='x', obj=cost, vtype=grb.GRB.CONTINUOUS, lb=0.0)
+# mm.addConstr(xx[1] + 2.0/3.0*xx[2] <= 5.0)
+# mm.addConstr(-1./5.*xx[1] + xx[2] <= 2.0)
+# mm.update()
 
-bc = BranchAndCut(initial_model=mm)
-bc.solve()
+# bc = BranchAndCut(initial_model=mm)
+# bc.solve()

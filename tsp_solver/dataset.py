@@ -54,11 +54,14 @@ class Dataset(object):
             match_obj = re.match(r'^(\d+)\s+(\d+)\s+(\d+)$', line)
             if match_obj:
                 try:
-                    node1     = int(match_obj.group(1))
-                    node2     = int(match_obj.group(2))
+                    node1     = match_obj.group(1)
+                    node2     = match_obj.group(2)
                     distance  = int(match_obj.group(3))
                 except ValueError:
                     raise StandardError('invalid edge value: ({})'.format(line))
+
+                if node1 == node2:
+                    raise StandardError('no loops allowed: ({})'.format(line))
 
                 nodes.add(node1)
                 nodes.add(node2)
@@ -77,6 +80,7 @@ class Dataset(object):
             raise StandardError('file {} did not contain the correct number of nodes (act {} != {} exp)'.format(filename, len(distance_by_edge), num_edges))
 
         self.nodes            = sorted(nodes)
+        self.edges            = sorted(distance_by_edge.keys())
         self.distance_by_edge = distance_by_edge
 
 
