@@ -31,10 +31,9 @@ def main():
     nodes, positions = create_random_nodes(NN=10)
     edges            = create_random_edges(nodes, 3)
 
-    graph = nx.Graph()
-    graph.add_nodes_from(nodes)
-
     for _ in xrange(100):
+        graph = nx.Graph()
+        graph.add_nodes_from(nodes)
         graph.remove_edges_from(graph.edges())
         edges = create_random_edges(nodes, 3)
         graph.add_edges_from(edges)
@@ -43,7 +42,7 @@ def main():
         axes.set_xlim([0,1])
         axes.set_ylim([0,1])
         nx.draw(graph, pos=positions, hold=True)
-        plt.pause(0.05)
+        plt.pause(0.025)
 
 
 
