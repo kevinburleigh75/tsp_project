@@ -66,10 +66,14 @@ class TspBranchAndCut(object):
         while len(self.queue) != 0:
             print('='*40)
             print('='*40)
-            model = self.queue.popleft()
+            if self.best_cost is None:# or len(self.queue) >= 500:
+                model = self.queue.pop()
+            else:
+                model = self.queue.popleft()
 
             model.optimize()
             print('best_cost = {}'.format(self.best_cost))
+            print('queue size = {}'.format(len(self.queue)))
             # print('='*40)
             # print(self.model_to_str(model, indent=2))
             # print('='*40)
@@ -98,6 +102,8 @@ class TspBranchAndCut(object):
                 model.optimize()
                 if self.solution_is_infeasible(model):
                     break
+                if not self.solution_can_become_new_best(model):
+                    break
 
                 print('    status    = {}'.format(model.status))
                 print('    best_cost = {}'.format(self.best_cost))
@@ -116,6 +122,7 @@ class TspBranchAndCut(object):
                 if self.solution_is_new_best(model):
                     print('      NEW BEST - FATHOMED')
                     self.update_best(model)
+                    print('      new best = {} queue size = {}'.format(self.best_cost, len(self.queue)))
                 else:
                     print('      NOT A NEW BEST - FATHOMED')
             elif not self.solution_is_integral(model):
@@ -172,6 +179,18 @@ class TspBranchAndCut(object):
 
             # import pdb; pdb.set_trace()
             model.addConstr(grb.quicksum(cvars) >= 2.0, 'subtour')
+
+        for model in self.queue:
+            mvars = model.getVars()
+
+            for cc in connected_component_nodes:
+                cut_edges = graph.get_cut_edges(nodes=cc)
+                var_idxs = sorted([self.idx_by_edge[edge] for edge in cut_edges])
+                cvars = [mvars[idx] for idx in var_idxs]
+
+                # import pdb; pdb.set_trace()
+                model.addConstr(grb.quicksum(cvars) >= 2.0, 'subtour')
+
 
         model.update()
 
