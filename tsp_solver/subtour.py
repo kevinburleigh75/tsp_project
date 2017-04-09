@@ -2,7 +2,7 @@ from collections import defaultdict
 import random
 from collections import deque
 
-def binary_to_edge(binaryArray, numNodes):
+def solution_to_edges(binaryArray, numNodes):
     """
     converts binary array representing
     edges to an array of enumerated edges
@@ -114,69 +114,99 @@ def make_Graph_from_Edges(edges):
 
     return graph
 
-def isTour(solution, graph):
+def is_tour(solution, graph):
     """
     determines whether a given solution is a binary
-    represenation of edges in a cycle, and whether those
-    edges are part of a cycle
-    Input: solution -- array of ints , graph -- dictionary of sets
-    Output: True if solution forms a cycle, False otherwise
-
+    represenation of edges in a tour
+    Input:  solution -- array of ints
+            graph    -- dictionary[node_id] = connected_node_ids
+    Output: True   if solution forms a tour
+            False  otherwise
     """
-    node_Degree = 2
-    numNodes = len(graph.keys())
-    #checks if solution is binary
+
+    ##
+    ## Check if solution is binary.
+    ##
+
     for edge in solution:
         if edge not in [0.0,1.0]:
             print "Entries in our solution must be binary floats"
             return False
 
-    edges = binary_to_edge(solution, numNodes)
-    if len(edges) != numNodes:
-        print "Number of edges must be the number of nodes for a cycle"
+    ##
+    ## Check if the number of selected edges is correct.
+    ##
+
+    num_nodes = len(graph.keys())
+    edges = solution_to_edges(solution, num_nodes)
+    if len(edges) != num_nodes:
+        print "Number of edges must be the number of nodes for a tour"
         return False
 
-    nodeInstanceDictionary = count_edge_nodes(edges, numNodes)
-    for node in nodeInstanceDictionary.keys():
-        if nodeInstanceDictionary[node] != node_Degree:
-            print "a node's degree must be 2 in a cycle"
+    degree_by_node = count_edge_nodes(edges, num_nodes)
+    for node in degree_by_node.keys():
+        if degree_by_node[node] != 2:
+            print "a node's degree must be 2 in a tour"
             return False
 
     pathGraph = make_Graph_from_Edges(edges)
     #print pathGraph
     pathComponents = connected_components(pathGraph)
     if len(pathComponents) > 1:
-        print "Tour has more than one connected components"
+        print "Tour has more than one connected component"
         return False
 
     return True
 
 
 if __name__ == '__main__':
-    def makeGraph(numNodes):
-        """makes undirected connected graph
-        Input: numNodes -- number of desired nodes
-        Output: graph with numNodes nodes
+    def makeGraph(num_nodes):
+        """
+        makes undirected connected graph
+        Input:  num_nodes -- number of desired nodes
+        Output: graph with num_nodes nodes
+                A graph is a dictionary that takes a
+                node id as a key and returns a set of
+                connected node ids.  No loops allowed.
         """
         graph = defaultdict(set)
-        for i in range(1, numNodes+1):
-            for j in range(1, numNodes+1):
-                if i != j:
-                    graph[i].add(j)
+        for nid1 in range(1, num_nodes+1):
+            for nid2 in range(1, num_nodes+1):
+                if nid1 != nid2:
+                    graph[nid1].add(nid2)
         return graph
 
-    #testcase with two connected components each of size 3
-    x = [1.0,1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,1.0,1.0,1.0]
+    ##
+    ## Selected edges form two connected components.
+    ##
 
+    gg = makeGraph(6)
+    xx = [1.0,1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,1.0,1.0,1.0]
+    assert is_tour(xx,gg) == False
 
-    d = {1: set([2, 3]), 2: set([1, 3]), 3: set([1, 2]), 4: set([5, 6]), 5: set([4, 6]), 6: set([4, 5])}
+    ##
+    ## Selected edges form a tour.
+    ##
 
-    graph6 = makeGraph(6)
-    print isTour(x,graph6)
-    fail = [1.0,1.0,1.0]
-    print isTour(fail, makeGraph(3))
+    gg = makeGraph(3)
+    xx = [1.0,1.0,1.0]
+    assert is_tour(xx,gg) == True
 
+    ##
+    ## Not enough edges selected.
+    ##
 
+    gg = makeGraph(3)
+    xx = [1.0,0.0,1.0]
+    assert is_tour(xx,gg) == False
+
+    ##
+    ## Non-binary selections.
+    ##
+
+    gg = makeGraph(4)
+    xx = [0.5,0.5,1.0,0.5,1.0,1.0]
+    assert is_tour(xx,gg) == False
 
 
 
