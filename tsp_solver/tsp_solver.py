@@ -20,14 +20,14 @@ class BranchAndCut(object):
         self.queue.append(grb.Model.copy(self.initial_model))
 
         while len(self.queue) != 0:
+            print('='*40)
             model = self.queue.popleft()
 
-            model.update()
             model.optimize()
 
-            print('='*40)
-            print(self.model_to_str(model, indent=2))
-            print('='*40)
+            # print('='*40)
+            # print(self.model_to_str(model, indent=2))
+            # print('='*40)
 
             if self.solution_is_infeasible(model):
                 print('    INFEASIBLE')
@@ -39,9 +39,12 @@ class BranchAndCut(object):
             ## TODO: Add heuristic cuts here.
 
             if self.solution_is_integral(model):
+                print('    INTEGRAL SOLUTION')
                 if self.solution_is_new_best(model):
+                    print('    NEW BEST')
                     self.update_best(model)
             else:
+                print('    ADDING GOMORY CUTS')
                 models = self.find_gomory_cuts(model)
                 self.queue.extend(models)
 
@@ -95,10 +98,12 @@ class BranchAndCut(object):
                 model1 = grb.Model.copy(model)
                 m1var  = model1.getVarByName(mvar.getAttr('VarName'))
                 model1.addConstr(m1var <= math.floor(val))
+                model1.update()
 
                 model2 = grb.Model.copy(model)
                 m2var  = model2.getVarByName(mvar.getAttr('VarName'))
                 model2.addConstr(m2var >= math.ceil(val))
+                model2.update()
 
                 return (model1, model2)
 
@@ -156,8 +161,9 @@ if __name__ == '__main__':
     bc = BranchAndCut(initial_model=model)
     bc.solve()
 
-    import pdb; pdb.set_trace()
-    print('hello')
+    print('BEST COST: {}'.format(bc.best_cost))
+    # import pdb; pdb.set_trace()
+    # print('hello')
 
 
 # def print_info(model):
