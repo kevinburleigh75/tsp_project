@@ -150,27 +150,31 @@ def isTour(solution, graph):
         return False
 
     return True
-#testcase with two connected components each of size 3
-x = [1.0,1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,1.0,1.0,1.0]
 
-def makeGraph(numNodes):
-    """makes undirected connected graph
-    Input: numNodes -- number of desired nodes
-    Output: graph with numNodes nodes
-    """
-    graph = defaultdict(set)
-    for i in range(1, numNodes+1):
-        for j in range(1, numNodes+1):
-            if i != j:
-                graph[i].add(j)
-    return graph
 
-d = {1: set([2, 3]), 2: set([1, 3]), 3: set([1, 2]), 4: set([5, 6]), 5: set([4, 6]), 6: set([4, 5])}
+if __name__ == '__main__':
+    def makeGraph(numNodes):
+        """makes undirected connected graph
+        Input: numNodes -- number of desired nodes
+        Output: graph with numNodes nodes
+        """
+        graph = defaultdict(set)
+        for i in range(1, numNodes+1):
+            for j in range(1, numNodes+1):
+                if i != j:
+                    graph[i].add(j)
+        return graph
 
-graph6 = makeGraph(6)
-print isTour(x,graph6)
-fail = [1.0,1.0,1.0]
-print isTour(fail, makeGraph(3))
+    #testcase with two connected components each of size 3
+    x = [1.0,1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,0.0,0.0,0.0,1.0,1.0,1.0]
+
+
+    d = {1: set([2, 3]), 2: set([1, 3]), 3: set([1, 2]), 4: set([5, 6]), 5: set([4, 6]), 6: set([4, 5])}
+
+    graph6 = makeGraph(6)
+    print isTour(x,graph6)
+    fail = [1.0,1.0,1.0]
+    print isTour(fail, makeGraph(3))
 
 
 
