@@ -2,6 +2,9 @@ from collections import deque
 import gurobipy as grb
 import math
 import re
+import random
+
+random.seed(42)
 
 from dataset import Dataset
 # import subtour
@@ -38,7 +41,7 @@ class TspBranchAndCut(object):
         self.queue         = deque()
 
         self.vars          = None
-        self.best_cost     = None
+        self.best_cost     = None ## 108160
         self.best_model    = None
 
 
@@ -64,75 +67,50 @@ class TspBranchAndCut(object):
         self.queue.append(grb.Model.copy(model))
 
         while len(self.queue) != 0:
-            print('='*40)
-            print('='*40)
-            if self.best_cost is None:# or len(self.queue) >= 500:
+            print('popping from queue')
+            if self.best_cost is None:
                 model = self.queue.pop()
+            # elif len(self.queue) >= 250:
+            #     self.queue.rotate(random.randint(1,len(self.queue)))
+            #     model = self.queue.pop()
             else:
                 model = self.queue.popleft()
 
-            model.optimize()
-            print('best_cost = {}'.format(self.best_cost))
-            print('queue size = {}'.format(len(self.queue)))
-            # print('='*40)
-            # print(self.model_to_str(model, indent=2))
-            # print('='*40)
-
-            if self.solution_is_infeasible(model):
-                print('  INFEASIBLE')
-                continue
-            if not self.solution_can_become_new_best(model):
-                print('  CANNOT BECOME BEST')
-                continue
-
-            print('  ADDING CUTS (if possible)')
             while True:
-                if self.solution_is_tour(model):
-                    break
-
-                if self.solution_is_integral(model):
-                    # print('    SOLUTION IS INTEGRAL')
-                    if not self.add_subtour_constraints(model):
-                        # print('      NO CUTS WERE ADDED')
-                        break
-                else:
-                    break
-
-                print('    optimizing - {}'.format(len(model.getConstrs())))
+                print('optimizing: bc: {} ql: {} nc: {}'.format(self.best_cost, len(self.queue), len(model.getConstrs())))
                 model.optimize()
+                print('status: {}'.format(model.status))
+
                 if self.solution_is_infeasible(model):
+                    print('  infeasible')
                     break
                 if not self.solution_can_become_new_best(model):
+                    print('  cannot become best')
                     break
 
-                print('    status    = {}'.format(model.status))
-                print('    best_cost = {}'.format(self.best_cost))
-                print('    cur_cost  = {}'.format(model.getAttr('ObjVal')))
+                if self.solution_is_tour(model):
+                    print('  tour')
+                    if self.solution_is_new_best(model):
+                        print('  new best')
+                        self.update_best(model)
+                    break
 
+                print('adding constraints')
+                constraints_were_added = False
+                constraints_were_added = constraints_were_added or self.add_subtour_constraints(model)
+                constraints_were_added = constraints_were_added or self.add_comb_constraints(model)
 
-            if self.solution_is_infeasible(model):
-                print('  INFEASIBLE')
-                continue
-            if not self.solution_can_become_new_best(model):
-                print('  CANNOT BECOME BEST')
-                continue
+                if constraints_were_added:
+                    print('  constraints were added')
+                    continue
 
-            if self.solution_is_tour(model):
-                print('    SOLUTION IS TOUR')
-                if self.solution_is_new_best(model):
-                    print('      NEW BEST - FATHOMED')
-                    self.update_best(model)
-                    print('      new best = {} queue size = {}'.format(self.best_cost, len(self.queue)))
-                else:
-                    print('      NOT A NEW BEST - FATHOMED')
-            elif not self.solution_is_integral(model):
-                print('    BRANCHING ON NON-INTEGER X')
-                models = self.create_branch_models(model)
-                if len(models) == 0:
-                    raise StandardError('no branch models could be found')
-                self.queue.extend(models)
-            else:
-                raise StandardError('integral non-tour solution - coding error!')
+                if not self.solution_is_integral(model):
+                    print('adding branches')
+                    models = self.create_branch_models(model)
+                    if len(models) == 0:
+                        raise StandardError('no branch models could be found')
+                    self.queue.extend(models)
+                    break
 
 
     def solution_is_infeasible(self, model):
@@ -155,13 +133,16 @@ class TspBranchAndCut(object):
 
 
     def convert_model(self, model):
-        graph = Graph(nodes=self.nodes, edges=self.edges, cost_by_edge=self.cost_by_edge)
+        graph = Graph(nodes=self.nodes, edges=self.edges)
         solution = model.getAttr('X')
 
         return (graph, solution)
 
 
     def add_subtour_constraints(self, model):
+        if not self.solution_is_integral(model):
+            return False
+
         graph, xx = self.convert_model(model)
         connected_component_nodes, connected_component_edges = graph.binary_connected_components(solution=xx)
 
@@ -170,17 +151,10 @@ class TspBranchAndCut(object):
 
         # import pdb; pdb.set_trace()
 
-        mvars = model.getVars()
+        models = [mm for mm in self.queue]
+        models.append(model)
 
-        for cc in connected_component_nodes:
-            cut_edges = graph.get_cut_edges(nodes=cc)
-            var_idxs = sorted([self.idx_by_edge[edge] for edge in cut_edges])
-            cvars = [mvars[idx] for idx in var_idxs]
-
-            # import pdb; pdb.set_trace()
-            model.addConstr(grb.quicksum(cvars) >= 2.0, 'subtour')
-
-        for model in self.queue:
+        for model in models:
             mvars = model.getVars()
 
             for cc in connected_component_nodes:
@@ -190,11 +164,111 @@ class TspBranchAndCut(object):
 
                 # import pdb; pdb.set_trace()
                 model.addConstr(grb.quicksum(cvars) >= 2.0, 'subtour')
-
-
-        model.update()
+                model.update()
 
         return True
+
+
+    def add_comb_constraints(self, model):
+        graph, xx = self.convert_model(model)
+
+        ##
+        ## Find the connected components of the G12 graph, which
+        ## is G with the edges with decision values 1.0,0.0 removed.
+        ##
+
+        g12_edges = [edge for edge in graph.edges if xx[graph.idx_by_edge[edge]] not in [1.0,0.0]]
+        # print('g12_edges = {}'.format(g12_edges))
+        g12 = Graph(nodes=graph.nodes, edges=g12_edges)
+        # print('g12.edges_by_node = {}'.format(g12.edges_by_node))
+        ccs_nodes, ccs_edges = g12.connected_components()
+
+        ##
+        ##
+        ##
+
+        constraints_were_added = False
+
+        for cc_idx,cc_nodes in enumerate(ccs_nodes):
+            cc_cut_edges = graph.get_cut_edges(nodes=cc_nodes)
+            one_edges = [edge for edge in cc_cut_edges if xx[graph.idx_by_edge[edge]] == 1.0]
+            if len(one_edges) % 2 == 1:
+                while True:
+                    external_node_intersection_count = {node: 0 for node in nodes}
+                    for edge in one_edges:
+                        for node in edge:
+                            if node not in nodes:
+                                external_node_intersection_count[node] += 1
+
+                    multiply_intersected_nodes = [node for node,count in external_node_intersection_count.items() if count > 1]
+
+                    if len(multiply_intersected_nodes) == 0:
+                        break
+
+                    print('comb - multiply intersected nodes: {}'.format(multiply_intersected_nodes))
+                    for node in multiply_intersected_nodes:
+                        cc_nodes.append(node)
+                    cc_cut_edges = graph.get_cut_edges(nodes=cc_nodes)
+                    one_edges = [edge for edge in cc_cut_edges if xx[graph.idx_by_edge[edge]] == 1.0]
+
+                cc_nodes  = sorted(set(cc_nodes), key=text_keys)
+                one_edges = sorted(set(one_edges), key=tuple_keys)
+
+                if len(one_edges) == 1:
+                    print('comb - subtour')
+
+                    handle_cut_edges = sorted(set(graph.get_cut_edges(nodes=cc_nodes)), key=tuple_keys)
+                    handle_var_idxs  = sorted([self.idx_by_edge[edge] for edge in handle_cut_edges])
+
+                    models = [mm for mm in self.queue]
+                    models.append(model)
+
+                    for midx,model in enumerate(models):
+
+                        mvars = model.getVars()
+
+                        handle_vars = [mvars[idx] for idx in handle_var_idxs]
+
+                        model.addConstr(grb.quicksum(handle_vars) >= 2.0, 'comb-subtour')
+                        model.update()
+
+                    constraints_were_added = True
+
+                else:
+                    print('comb - blossom H={} T={}'.format(cc_nodes,one_edges))
+
+                    handle_cut_edges = sorted(set(graph.get_cut_edges(nodes=cc_nodes)), key=tuple_keys)
+                    tooth_cut_edges  = [graph.get_cut_edges(nodes=tooth_nodes) for tooth_nodes in one_edges]
+                    tooth_cut_edges  = sorted([item for sublist in tooth_cut_edges for item in sublist], key=tuple_keys)
+
+                    # print('  handle_cut_edges = {}'.format(handle_cut_edges))
+                    # print('  tooth_cut_edges  = {}'.format(tooth_cut_edges))
+
+                    handle_var_idxs = sorted([self.idx_by_edge[edge] for edge in handle_cut_edges])
+                    tooth_var_idxs  = sorted([self.idx_by_edge[edge] for edge in tooth_cut_edges])
+
+                    models = [mm for mm in self.queue]
+                    models.append(model)
+
+                    for midx,model in enumerate(models):
+
+                        mvars = model.getVars()
+
+                        handle_vars = [mvars[idx] for idx in handle_var_idxs]
+                        tooth_vars  = [mvars[idx] for idx in tooth_var_idxs]
+
+                        # import pdb; pdb.set_trace()
+                        expr = grb.quicksum(handle_vars) + grb.quicksum(tooth_vars) >= 3*len(one_edges) + 1
+
+                        # if midx==0:
+                        #     print(expr)
+                        model.addConstr(expr, 'comb')
+                        model.update()
+
+                    constraints_were_added = True
+
+        return constraints_were_added
+
 
     def solution_is_integral(self, model):
         if grb.GRB.OPTIMAL != model.status:
@@ -275,60 +349,6 @@ if __name__ == '__main__':
     ## Solve the problem.
     ##
 
-    # bc = BranchAndCut(initial_model=model)
     bc = TspBranchAndCut(nodes=nodes, edges=edges, cost_by_edge=distance_by_edge)
     bc.solve()
     print('BEST COST: {}'.format(bc.best_cost))
-
-    # import pdb; pdb.set_trace()
-    # print('hello')
-
-
-# def print_info(model):
-#     # model.write('model.mps')
-#     print('=' * 40)
-#     print('INFO:')
-#     if model.getAttr('ModelSense') > 0:
-#         print('  min:')
-#     else:
-#         print('  max:')
-#     print('    {}'.format(model.getObjective()))
-
-#     print('  subject to:')
-#     mvars = model.getVars()
-
-#     for cc in model.getConstrs():
-#         rr = model.getRow(cc)
-#         ss = '    '
-#         for idx in range(rr.size()):
-#             coeff = rr.getCoeff(idx)
-#             mvar  = rr.getVar(idx)
-#             ss += '{:+1.3e} * {}  '.format(coeff, mvar.getAttr('VarName'))
-#         ss += '{}= '.format(cc.getAttr('Sense'))
-#         ss += '{}'.format(cc.getAttr('RHS'))
-#         print(ss)
-
-#     if grb.GRB.OPTIMAL == model.status:
-#         print('  optimal solution:')
-#         for var in model.getVars():
-#             print('    {:5.5s} {:+1.5e}'.format(var.getAttr('VarName'), var.getAttr('X')))
-#     else:
-#         print('  no optimum found')
-#     print('=' * 40)
-
-# mm = grb.Model()
-
-# vv = [1, 2]
-
-# cost = {
-#     1: -1.0,
-#     2: -1.0,
-# }
-
-# xx = mm.addVars(vv, name='x', obj=cost, vtype=grb.GRB.CONTINUOUS, lb=0.0)
-# mm.addConstr(xx[1] + 2.0/3.0*xx[2] <= 5.0)
-# mm.addConstr(-1./5.*xx[1] + xx[2] <= 2.0)
-# mm.update()
-
-# bc = BranchAndCut(initial_model=mm)
-# bc.solve()
