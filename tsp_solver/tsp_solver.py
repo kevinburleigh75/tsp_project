@@ -79,7 +79,7 @@ class TspBranchAndCut(object):
             while True:
                 print('optimizing: bc: {} ql: {} nc: {}'.format(self.best_cost, len(self.queue), len(model.getConstrs())))
                 model.optimize()
-                print('status: {}'.format(model.status))
+                # print('status: {}'.format(model.status))
 
                 if self.solution_is_infeasible(model):
                     print('  infeasible')
