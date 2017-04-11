@@ -3,6 +3,7 @@ import gurobipy as grb
 import math
 import re
 import random
+import time
 
 random.seed(42)
 
@@ -57,6 +58,8 @@ class TspBranchAndCut(object):
         ##        0.0 <= x_e <= 1   for e in edges
         ##
 
+        start_time = time.time()
+
         model          = grb.Model('tsp')
         xx             = model.addVars(self.edges, lb=0.0, ub=1.0, vtype=grb.GRB.CONTINUOUS, name='xx', obj=self.cost_by_edge)
         degree_constrs = model.addConstrs((xx.sum(node,'*') + xx.sum('*',node) == 2.0 for node in self.nodes), 'degree')
@@ -67,15 +70,10 @@ class TspBranchAndCut(object):
         self.queue.append(grb.Model.copy(model))
 
         while len(self.queue) != 0:
-            print('popping from queue')
-            # if self.best_cost is None:
-            #     model = self.queue.pop()
-            # # elif len(self.queue) >= 250:
-            # #     self.queue.rotate(random.randint(1,len(self.queue)))
-            # #     model = self.queue.pop()
-            # else:
-            #     model = self.queue.popleft()
+            # if time.time() - start_time > 10.0:
+            #     break
 
+            print('popping from queue')
             model = self.queue.popleft()
 
             while True:
@@ -156,8 +154,6 @@ class TspBranchAndCut(object):
         if len(connected_component_nodes) == 1:
             return False
 
-        # import pdb; pdb.set_trace()
-
         models = [mm for mm in self.queue]
         models.append(model)
 
@@ -169,9 +165,7 @@ class TspBranchAndCut(object):
                 var_idxs = sorted([self.idx_by_edge[edge] for edge in cut_edges])
                 cvars = [mvars[idx] for idx in var_idxs]
 
-                # import pdb; pdb.set_trace()
                 model.addConstr(grb.quicksum(cvars) >= 2.0, 'subtour-integral')
-                # model.update()
 
         return True
 
@@ -191,19 +185,10 @@ class TspBranchAndCut(object):
             cur_cuts = modified_graph.find_min_cut()
             all_cuts.extend(cur_cuts)
 
-            # print('HERE 1 {}'.format(cur_cuts[0][0]))
-
             if cur_cuts[0][0] > 0.0:
                 break
 
-            print('HERE 2')
-
-
-            # print('modified_graph: {}'.format(modified_graph))
-            new_nodes = set(modified_graph.nodes) - set(cur_cuts[0][1])
-            # print('nodes      : {}'.format(sorted(modified_graph.nodes)))
-            # print('cur_cuts[0]: {}'.format(cur_cuts[0]))
-            # print('new nodes  : {}'.format(sorted(new_nodes)))
+            new_nodes   = set(modified_graph.nodes) - set(cur_cuts[0][1])
             new_edges   = set()
             new_weights = {}
             for node in new_nodes:
@@ -223,14 +208,6 @@ class TspBranchAndCut(object):
         if all_cuts[0][0] >= 2.0 - 1e-8:
             return False
 
-        # min_cut_value, min_cut_nodes = all_cuts[0]
-
-        # min_cut_value, min_cut_nodes = graph.find_min_cut()
-        # if min_cut_value >= 2.0 - 1e-8:
-        #     return False
-        # print('min_cut_value = {:+1.16e}'.format(min_cut_value))
-        # print('min_cut_nodes = [{}] {}'.format(len(min_cut_nodes), min_cut_nodes))
-
         models = [mm for mm in self.queue]
         models.append(model)
 
@@ -247,7 +224,6 @@ class TspBranchAndCut(object):
                 cvars = [mvars[idx] for idx in var_idxs]
 
                 model.addConstr(grb.quicksum(cvars) >= 2.0, 'subtour-nonintegral')
-                # model.update()
 
         return True
 
@@ -261,10 +237,8 @@ class TspBranchAndCut(object):
         ##
 
         g12_edges = [edge for edge in graph.edges if xx[graph.idx_by_edge[edge]] not in [1.0,0.0]]
-        # print('g12_edges = {}'.format(g12_edges))
         weight_by_edge = {edge: 0.0 for edge in g12_edges}
         g12 = Graph(nodes=graph.nodes, edges=g12_edges, weight_by_edge=weight_by_edge)
-        # print('g12.edges_by_node = {}'.format(g12.edges_by_node))
         ccs_nodes, ccs_edges = g12.connected_components()
 
         ##
@@ -314,7 +288,6 @@ class TspBranchAndCut(object):
                         handle_vars = [mvars[idx] for idx in handle_var_idxs]
 
                         model.addConstr(grb.quicksum(handle_vars) >= 2.0, 'comb-subtour')
-                        # model.update()
 
                     constraints_were_added = True
 
@@ -324,9 +297,6 @@ class TspBranchAndCut(object):
                     handle_cut_edges = sorted(set(graph.get_cut_edges(nodes=cc_nodes)), key=tuple_keys)
                     tooth_cut_edges  = [graph.get_cut_edges(nodes=tooth_nodes) for tooth_nodes in one_edges]
                     tooth_cut_edges  = sorted([item for sublist in tooth_cut_edges for item in sublist], key=tuple_keys)
-
-                    # print('  handle_cut_edges = {}'.format(handle_cut_edges))
-                    # print('  tooth_cut_edges  = {}'.format(tooth_cut_edges))
 
                     handle_var_idxs = sorted([self.idx_by_edge[edge] for edge in handle_cut_edges])
                     tooth_var_idxs  = sorted([self.idx_by_edge[edge] for edge in tooth_cut_edges])
@@ -341,13 +311,9 @@ class TspBranchAndCut(object):
                         handle_vars = [mvars[idx] for idx in handle_var_idxs]
                         tooth_vars  = [mvars[idx] for idx in tooth_var_idxs]
 
-                        # import pdb; pdb.set_trace()
                         expr = grb.quicksum(handle_vars) + grb.quicksum(tooth_vars) >= 3*len(one_edges) + 1
 
-                        # if midx==0:
-                        #     print(expr)
                         model.addConstr(expr, 'comb')
-                        # model.update()
 
                     constraints_were_added = True
 
@@ -442,6 +408,22 @@ if __name__ == '__main__':
     ## Solve the problem.
     ##
 
+    enable_profiler = False
+
+    if enable_profiler:
+        import cProfile, pstats, StringIO
+        prof = cProfile.Profile()
+        prof.enable()
+
+
     bc = TspBranchAndCut(nodes=nodes, edges=edges, cost_by_edge=distance_by_edge)
     bc.solve()
     print('BEST COST: {}'.format(bc.best_cost))
+
+
+    if enable_profiler:
+        prof.disable()
+        ss = StringIO.StringIO()
+        ps = pstats.Stats(prof, stream=ss).sort_stats('cumulative')
+        ps.print_stats()
+        print ss.getvalue()

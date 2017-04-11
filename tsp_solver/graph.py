@@ -21,8 +21,12 @@ class Graph(object):
         self.weight_by_edge = copy.copy(weight_by_edge)
 
         for edge in self.edges:
-            if edge not in weight_by_edge:
+            if edge not in self.weight_by_edge:
                 raise ValueError('missing edge weight for edge {}'.format(edge))
+
+        for edge,weight in self.weight_by_edge.items():
+            (node1,node2) = edge
+            self.weight_by_edge[(node2,node1)] = weight
 
         self.num_nodes = len(self.nodes)
         self.num_edges = len(self.edges)
@@ -206,24 +210,28 @@ class Graph(object):
             # print('merged_graph = {}'.format(merged_graph))
             # print('merged_graph,num_nodes = {}'.format(merged_graph.num_nodes))
 
-            node_set = [merged_graph.nodes[0]]
+            penultimate_node = None
+            last_node        = merged_graph.nodes[0]
+
+            node_set = set([last_node])
 
             while True:
-                next_node = merged_graph._find_next_connected_node(target_nodes=node_set)
-                if next_node is None:
+                new_node = merged_graph._find_next_connected_node(target_nodes=node_set)
+                if new_node is None:
                     break
-                node_set.append(next_node)
+                penultimate_node = last_node
+                last_node        = new_node
+                node_set.add(new_node)
 
             # print('node set = {}'.format(node_set))
 
-            penultimate_node = node_set[-2]
-            last_node        = node_set[-1]
+            # penultimate_node = node_list[-2]
+            # last_node        = node_list[-1]
 
             current_cut_value = 0
             current_cut_nodes = [last_node]
             for other_node in merged_graph.nodes_by_node[last_node]:
-                current_cut_value += merged_graph.weight_by_nodes(last_node, other_node)
-                # current_cut_nodes.append(other_node)
+                current_cut_value += merged_graph.weight_by_edge[(last_node, other_node)]
 
             merged_graph = merged_graph._merge_nodes(node1=penultimate_node, node2=last_node)
 
@@ -234,9 +242,6 @@ class Graph(object):
                 min_cut_nodes = current_cut_nodes
 
         all_cuts = sorted(all_cuts, key=lambda x: x[0])
-
-        # min_cut_nodes = [item for item in flatten(min_cut_nodes, list_or_tuple)]
-        # return min_cut_value, min_cut_nodes
 
         return all_cuts
 
@@ -249,17 +254,14 @@ class Graph(object):
         Output: node that is tightly connected not in A
         """
 
-        ## convert target_nodes to a set to ensure fast lookup
-        target_nodes = set(target_nodes)
-
         max_weight = -float('inf')
         best_node  = None
 
-        for node1 in set(self.nodes) - set(target_nodes):
+        for node1 in self.node_set - target_nodes:
+            node1_target_nodes = self.nodes_by_node[node1] & target_nodes
             current_weight = 0
-            for node2 in target_nodes:
-                if node2 in self.nodes_by_node[node1]:
-                    current_weight += self.weight_by_nodes(node1, node2)
+            for node2 in node1_target_nodes:
+                current_weight += self.weight_by_edge[(node1, node2)]
             if current_weight > max_weight:
                 best_node  = node1
                 max_weight = current_weight
@@ -277,16 +279,16 @@ class Graph(object):
         ## Create a new node and edge lists, but exclude
         ## anything affected by node1 or node2.
         ##
+        node12_set = set([node1,node2])
 
-        new_nodes          = list(set(self.nodes) - set([node1, node2]))
-        new_edges          = [edge for edge in self.edges if len(set(edge) - set([node1,node2])) == 2]
-        new_weight_by_edge = {edge: weight for edge,weight in self.weight_by_edge.items() if len(set(edge) - set([node1,node2])) == 2}
+        new_nodes          = list(self.node_set - set([node1, node2]))
+        new_edges          = [edge for edge in self.edges if len(set(edge) - node12_set) == 2]
+        new_weight_by_edge = {edge: weight for edge,weight in self.weight_by_edge.items() if len(set(edge) - node12_set) == 2}
 
         ##
         ## Create the new node and its merged edges.
         ##
 
-        # new_node = '--'.join([str(node1), str(node2)])
         new_node = (node1, node2)
         new_nodes.append(new_node)
 
@@ -296,11 +298,11 @@ class Graph(object):
             if node2 in self.nodes_by_node[other_node]:
                 new_edge = (new_node,other_node)
                 new_edges.append(new_edge)
-                new_weight_by_edge[new_edge] = self.weight_by_nodes(other_node, node1) + self.weight_by_nodes(other_node, node2)
+                new_weight_by_edge[new_edge] = self.weight_by_edge[(other_node, node1)] + self.weight_by_edge[(other_node, node2)]
             else:
                 new_edge = (new_node,other_node)
                 new_edges.append(new_edge)
-                new_weight_by_edge[new_edge] = self.weight_by_nodes(node1, other_node)
+                new_weight_by_edge[new_edge] = self.weight_by_edge[(node1, other_node)]
 
         for other_node in self.nodes_by_node[node2]:
             if other_node == node1:
@@ -308,7 +310,7 @@ class Graph(object):
             if node1 not in self.nodes_by_node[other_node]:
                 new_edge = (new_node,other_node)
                 new_edges.append(new_edge)
-                new_weight_by_edge[new_edge] = self.weight_by_nodes(node2, other_node)
+                new_weight_by_edge[new_edge] = self.weight_by_edge[(node2, other_node)]
 
         # print('new nodes: {}'.format(new_nodes))
         # print('new edges: {}'.format(new_edges))
