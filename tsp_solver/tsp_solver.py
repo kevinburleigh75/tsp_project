@@ -41,7 +41,7 @@ class TspBranchAndCut(object):
         self.queue         = deque()
 
         self.vars          = None
-        self.best_cost     = None ## 108160
+        self.best_cost     = 108160
         self.best_model    = None
 
 
@@ -68,7 +68,7 @@ class TspBranchAndCut(object):
 
         while len(self.queue) != 0:
             print('popping from queue')
-            if self.best_cost is None:
+            if False: #self.best_cost is None:
                 model = self.queue.pop()
             # elif len(self.queue) >= 250:
             #     self.queue.rotate(random.randint(1,len(self.queue)))
@@ -78,6 +78,7 @@ class TspBranchAndCut(object):
 
             while True:
                 print('optimizing: bc: {} ql: {} nc: {}'.format(self.best_cost, len(self.queue), len(model.getConstrs())))
+                model.update()
                 model.optimize()
                 # print('status: {}'.format(model.status))
 
@@ -97,8 +98,9 @@ class TspBranchAndCut(object):
 
                 print('adding constraints')
                 constraints_were_added = False
-                constraints_were_added = constraints_were_added or self.add_subtour_constraints(model)
-                constraints_were_added = constraints_were_added or self.add_comb_constraints(model)
+                constraints_were_added = self.add_integral_subtour_constraints(model)    | constraints_were_added
+                constraints_were_added = self.add_nonintegral_subtour_constraints(model) | constraints_were_added
+                constraints_were_added = self.add_comb_constraints(model)                | constraints_were_added
 
                 if constraints_were_added:
                     print('  constraints were added')
@@ -133,13 +135,14 @@ class TspBranchAndCut(object):
 
 
     def convert_model(self, model):
-        graph = Graph(nodes=self.nodes, edges=self.edges)
         solution = model.getAttr('X')
+        weight_by_edge = {edge: solution[idx] for idx,edge in enumerate(self.edges)}
+        graph = Graph(nodes=self.nodes, edges=self.edges, weight_by_edge=weight_by_edge)
 
         return (graph, solution)
 
 
-    def add_subtour_constraints(self, model):
+    def add_integral_subtour_constraints(self, model):
         if not self.solution_is_integral(model):
             return False
 
@@ -163,8 +166,43 @@ class TspBranchAndCut(object):
                 cvars = [mvars[idx] for idx in var_idxs]
 
                 # import pdb; pdb.set_trace()
-                model.addConstr(grb.quicksum(cvars) >= 2.0, 'subtour')
-                model.update()
+                model.addConstr(grb.quicksum(cvars) >= 2.0, 'subtour-integral')
+                # model.update()
+
+        return True
+
+    def add_nonintegral_subtour_constraints(self, model):
+        if self.solution_is_integral(model):
+            return False
+
+        graph, xx = self.convert_model(model)
+        min_cut_value, min_cut_nodes = graph.find_min_cut()
+
+        if min_cut_value >= 2.0 - 1e-8:
+            return False
+
+        print('min_cut_value = {:+1.16e}'.format(min_cut_value))
+        print('min_cut_nodes = [{}] {}'.format(len(min_cut_nodes), min_cut_nodes))
+
+        models = [mm for mm in self.queue]
+        models.append(model)
+
+        for model in models:
+            mvars = model.getVars()
+
+            cut_edges = graph.get_cut_edges(nodes=min_cut_nodes)
+            print('cut_edges = [{}] {}'.format(len(cut_edges), cut_edges))
+            cut_weight = 0
+            for edge in cut_edges:
+                cut_weight += graph.weight_by_edge[edge]
+            print('cut_weight = {}'.format(cut_weight))
+
+            var_idxs = sorted([self.idx_by_edge[edge] for edge in cut_edges])
+            cvars = [mvars[idx] for idx in var_idxs]
+
+            # import pdb; pdb.set_trace()
+            model.addConstr(grb.quicksum(cvars) >= 2.0, 'subtour-nonintegral')
+            # model.update()
 
         return True
 
@@ -173,13 +211,14 @@ class TspBranchAndCut(object):
         graph, xx = self.convert_model(model)
 
         ##
-        ## Find the connected components of the G12 graph, which
+        # Find the connected components of the G12 graph, which
         ## is G with the edges with decision values 1.0,0.0 removed.
         ##
 
         g12_edges = [edge for edge in graph.edges if xx[graph.idx_by_edge[edge]] not in [1.0,0.0]]
         # print('g12_edges = {}'.format(g12_edges))
-        g12 = Graph(nodes=graph.nodes, edges=g12_edges)
+        weight_by_edge = {edge: 0.0 for edge in g12_edges}
+        g12 = Graph(nodes=graph.nodes, edges=g12_edges, weight_by_edge=weight_by_edge)
         # print('g12.edges_by_node = {}'.format(g12.edges_by_node))
         ccs_nodes, ccs_edges = g12.connected_components()
 
@@ -230,7 +269,7 @@ class TspBranchAndCut(object):
                         handle_vars = [mvars[idx] for idx in handle_var_idxs]
 
                         model.addConstr(grb.quicksum(handle_vars) >= 2.0, 'comb-subtour')
-                        model.update()
+                        # model.update()
 
                     constraints_were_added = True
 
@@ -263,7 +302,7 @@ class TspBranchAndCut(object):
                         # if midx==0:
                         #     print(expr)
                         model.addConstr(expr, 'comb')
-                        model.update()
+                        # model.update()
 
                     constraints_were_added = True
 
