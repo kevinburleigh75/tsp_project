@@ -61,8 +61,6 @@ class TspBranchAndCut(object):
         ##        0.0 <= x_e <= 1   for e in edges
         ##
 
-        start_time = time.time()
-
         model          = grb.Model('tsp')
         xx             = model.addVars(self.edges, lb=0.0, ub=1.0, vtype=grb.GRB.CONTINUOUS, name='xx', obj=self.cost_by_edge)
         degree_constrs = model.addConstrs((xx.sum(node,'*') + xx.sum('*',node) == 2.0 for node in self.nodes), 'degree')
@@ -70,16 +68,29 @@ class TspBranchAndCut(object):
 
         model.setParam('OutputFlag', False)
 
-        # self.queue.append(grb.Model.copy(model))
-        heapq.heappush(self.queue, (-float('inf'), grb.Model.copy(model)))
+        use_min = True
+        self.queue.append((float('inf'), grb.Model.copy(model)))
+        # heapq.heappush(self.queue, (-float('inf'), grb.Model.copy(model)))
 
         while len(self.queue) != 0:
-            # if time.time() - start_time > 10.0:
-            #     break
+            # if len(self.queue) > 50:
+            #     use_min = False
+            # elif len(self.queue) < 30:
+            #     use_min = True
 
-            print('popping from queue')
+            if use_min:
+                print('popping from queue - min')
+                item = min(self.queue)
+            else:
+                print('popping from queue - max')
+                item = max(self.queue)
+            use_min = not use_min
+
+            self.queue.remove(item)
+            (_, model) = item
+
             # model = self.queue.popleft()
-            (_, model) = heapq.heappop(self.queue)
+            # (_, model) = heapq.heappop(self.queue)
 
             while True:
                 model.update()
@@ -105,6 +116,7 @@ class TspBranchAndCut(object):
 
                 print('adding constraints')
                 constraints_were_added = False
+                constraints_were_added = self.add_objective_constraints(model)           | constraints_were_added
                 constraints_were_added = self.add_integral_subtour_constraints(model)    | constraints_were_added
                 constraints_were_added = self.add_nonintegral_subtour_constraints(model) | constraints_were_added
                 constraints_were_added = self.add_comb_constraints(model)                | constraints_were_added
@@ -120,7 +132,7 @@ class TspBranchAndCut(object):
                         raise StandardError('no branch models could be found')
                     # self.queue.extend(models)
                     for branch_model in models:
-                        heapq.heappush(self.queue, (-model.getAttr('ObjVal'), branch_model))
+                        self.queue.append((model.getAttr('ObjVal'), branch_model))
                     break
 
 
@@ -149,6 +161,35 @@ class TspBranchAndCut(object):
         graph = Graph(nodes=self.nodes, edges=self.edges, weight_by_edge=weight_by_edge)
 
         return (graph, solution)
+
+
+    def add_objective_constraints(self, model):
+        if self.solution_is_infeasible(model):
+            return False
+
+        obj_val = model.getAttr('ObjVal')
+        ceil_obj_val  = math.ceil(obj_val)
+        floor_obj_val = math.floor(obj_val)
+
+        if (abs(obj_val - floor_obj_val) < 1e-6) or (abs(obj_val - ceil_obj_val) < 1e-6):
+            return False
+
+        print('  adding objective constraint ({},{},{:+1.5e})'.format(obj_val, ceil_obj_val, ceil_obj_val - obj_val))
+
+        ##
+        ## NOTE: This is a local cut (valid only for the current model given
+        ##       its current optimum) and as such should NOT be applied to
+        ##       all models in the queue.
+        ##
+
+        mvars = model.getVars()
+
+        var_idxs = sorted([self.idx_by_edge[edge] for edge in self.edges])
+        cvars = [mvars[idx].getAttr('Obj')*mvars[idx] for idx in var_idxs]
+
+        model.addConstr(grb.quicksum(cvars) >= ceil_obj_val, 'objective-roundup')
+
+        return True
 
 
     def add_integral_subtour_constraints(self, model):
@@ -333,7 +374,7 @@ class TspBranchAndCut(object):
 
         for mvar in model.getVars():
             val = mvar.getAttr('X')
-            if abs(val - int(val)) > 1e-8:
+            if val != int(val):
                 return False
 
         return True
@@ -423,9 +464,12 @@ if __name__ == '__main__':
         prof.enable()
 
 
+    start_time = time.time()
     bc = TspBranchAndCut(nodes=nodes, edges=edges, cost_by_edge=distance_by_edge)
     bc.solve()
+    end_time = time.time()
     print('BEST COST: {}'.format(bc.best_cost))
+    print('elapsed: {:+1.5e}'.format(end_time - start_time))
 
 
     if enable_profiler:
