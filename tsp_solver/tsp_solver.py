@@ -1,4 +1,6 @@
 from collections import deque
+import heapq
+
 import gurobipy as grb
 import math
 import re
@@ -39,7 +41,8 @@ class TspBranchAndCut(object):
         self.edge_by_idx = {idx: edge for idx,edge in enumerate(self.edges)}
         self.idx_by_edge = {edge: idx for idx,edge in enumerate(self.edges)}
 
-        self.queue         = deque()
+        # self.queue         = deque()
+        self.queue           = []
 
         self.vars          = None
         self.best_cost     = None ##108160
@@ -67,14 +70,16 @@ class TspBranchAndCut(object):
 
         model.setParam('OutputFlag', False)
 
-        self.queue.append(grb.Model.copy(model))
+        # self.queue.append(grb.Model.copy(model))
+        heapq.heappush(self.queue, (-float('inf'), grb.Model.copy(model)))
 
         while len(self.queue) != 0:
             # if time.time() - start_time > 10.0:
             #     break
 
             print('popping from queue')
-            model = self.queue.popleft()
+            # model = self.queue.popleft()
+            (_, model) = heapq.heappop(self.queue)
 
             while True:
                 model.update()
@@ -113,7 +118,9 @@ class TspBranchAndCut(object):
                     models = self.create_branch_models(model)
                     if len(models) == 0:
                         raise StandardError('no branch models could be found')
-                    self.queue.extend(models)
+                    # self.queue.extend(models)
+                    for branch_model in models:
+                        heapq.heappush(self.queue, (-model.getAttr('ObjVal'), branch_model))
                     break
 
 
@@ -154,7 +161,7 @@ class TspBranchAndCut(object):
         if len(connected_component_nodes) == 1:
             return False
 
-        models = [mm for mm in self.queue]
+        models = [mm for (_, mm) in self.queue]
         models.append(model)
 
         for model in models:
@@ -208,7 +215,7 @@ class TspBranchAndCut(object):
         if all_cuts[0][0] >= 2.0 - 1e-8:
             return False
 
-        models = [mm for mm in self.queue]
+        models = [mm for (_, mm) in self.queue]
         models.append(model)
 
         for model in models:
@@ -232,7 +239,7 @@ class TspBranchAndCut(object):
         graph, xx = self.convert_model(model)
 
         ##
-        # Find the connected components of the G12 graph, which
+        ## Find the connected components of the G12 graph, which
         ## is G with the edges with decision values 1.0,0.0 removed.
         ##
 
@@ -278,7 +285,7 @@ class TspBranchAndCut(object):
                     handle_cut_edges = sorted(set(graph.get_cut_edges(nodes=cc_nodes)), key=tuple_keys)
                     handle_var_idxs  = sorted([self.idx_by_edge[edge] for edge in handle_cut_edges])
 
-                    models = [mm for mm in self.queue]
+                    models = [mm for (_, mm) in self.queue]
                     models.append(model)
 
                     for midx,model in enumerate(models):
@@ -301,7 +308,7 @@ class TspBranchAndCut(object):
                     handle_var_idxs = sorted([self.idx_by_edge[edge] for edge in handle_cut_edges])
                     tooth_var_idxs  = sorted([self.idx_by_edge[edge] for edge in tooth_cut_edges])
 
-                    models = [mm for mm in self.queue]
+                    models = [mm for (_, mm) in self.queue]
                     models.append(model)
 
                     for midx,model in enumerate(models):
