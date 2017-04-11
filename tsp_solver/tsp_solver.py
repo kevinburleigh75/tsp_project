@@ -41,7 +41,7 @@ class TspBranchAndCut(object):
         self.queue         = deque()
 
         self.vars          = None
-        self.best_cost     = 108160
+        self.best_cost     = None ##108160
         self.best_model    = None
 
 
@@ -68,23 +68,27 @@ class TspBranchAndCut(object):
 
         while len(self.queue) != 0:
             print('popping from queue')
-            if False: #self.best_cost is None:
-                model = self.queue.pop()
-            # elif len(self.queue) >= 250:
-            #     self.queue.rotate(random.randint(1,len(self.queue)))
+            # if self.best_cost is None:
             #     model = self.queue.pop()
-            else:
-                model = self.queue.popleft()
+            # # elif len(self.queue) >= 250:
+            # #     self.queue.rotate(random.randint(1,len(self.queue)))
+            # #     model = self.queue.pop()
+            # else:
+            #     model = self.queue.popleft()
+
+            model = self.queue.popleft()
 
             while True:
-                print('optimizing: bc: {} ql: {} nc: {}'.format(self.best_cost, len(self.queue), len(model.getConstrs())))
                 model.update()
+                print('optimizing: bc: {} ql: {} nc: {}'.format(self.best_cost, len(self.queue), len(model.getConstrs())))
                 model.optimize()
-                # print('status: {}'.format(model.status))
 
                 if self.solution_is_infeasible(model):
                     print('  infeasible')
                     break
+
+                print('value / status: {:+1.5e} {}'.format(model.getAttr('ObjVal'), model.status))
+
                 if not self.solution_can_become_new_best(model):
                     print('  cannot become best')
                     break
@@ -176,13 +180,56 @@ class TspBranchAndCut(object):
             return False
 
         graph, xx = self.convert_model(model)
-        min_cut_value, min_cut_nodes = graph.find_min_cut()
 
-        if min_cut_value >= 2.0 - 1e-8:
+
+        modified_graph, xx = self.convert_model(model)
+        all_cuts = []
+        iter_num = 0
+        while iter_num < 100:
+            iter_num +=  1
+
+            cur_cuts = modified_graph.find_min_cut()
+            all_cuts.extend(cur_cuts)
+
+            # print('HERE 1 {}'.format(cur_cuts[0][0]))
+
+            if cur_cuts[0][0] > 0.0:
+                break
+
+            print('HERE 2')
+
+
+            # print('modified_graph: {}'.format(modified_graph))
+            new_nodes = set(modified_graph.nodes) - set(cur_cuts[0][1])
+            # print('nodes      : {}'.format(sorted(modified_graph.nodes)))
+            # print('cur_cuts[0]: {}'.format(cur_cuts[0]))
+            # print('new nodes  : {}'.format(sorted(new_nodes)))
+            new_edges   = set()
+            new_weights = {}
+            for node in new_nodes:
+                for edge in modified_graph.edges_by_node[node]:
+                    if (edge[0] in new_nodes) and (edge[1] in new_nodes):
+                        new_edges.add(edge)
+                        new_weights[edge] = modified_graph.weight_by_edge[edge]
+
+            modified_graph = Graph(nodes=new_nodes, edges=new_edges, weight_by_edge=new_weights)
+
+        all_cuts = sorted(all_cuts, key=lambda x: x[0])
+
+        for idx,cut in enumerate(all_cuts):
+            if cut[0] < 2.0 - 1e-8:
+                print('cut {}: {:+1.5e} {}'.format(idx,cut[0],cut[1]))
+
+        if all_cuts[0][0] >= 2.0 - 1e-8:
             return False
 
-        print('min_cut_value = {:+1.16e}'.format(min_cut_value))
-        print('min_cut_nodes = [{}] {}'.format(len(min_cut_nodes), min_cut_nodes))
+        # min_cut_value, min_cut_nodes = all_cuts[0]
+
+        # min_cut_value, min_cut_nodes = graph.find_min_cut()
+        # if min_cut_value >= 2.0 - 1e-8:
+        #     return False
+        # print('min_cut_value = {:+1.16e}'.format(min_cut_value))
+        # print('min_cut_nodes = [{}] {}'.format(len(min_cut_nodes), min_cut_nodes))
 
         models = [mm for mm in self.queue]
         models.append(model)
@@ -190,19 +237,17 @@ class TspBranchAndCut(object):
         for model in models:
             mvars = model.getVars()
 
-            cut_edges = graph.get_cut_edges(nodes=min_cut_nodes)
-            print('cut_edges = [{}] {}'.format(len(cut_edges), cut_edges))
-            cut_weight = 0
-            for edge in cut_edges:
-                cut_weight += graph.weight_by_edge[edge]
-            print('cut_weight = {}'.format(cut_weight))
+            for (cut_value, cut_nodes) in all_cuts:
+                if cut_value >= 2.0 - 1e-8:
+                    break
 
-            var_idxs = sorted([self.idx_by_edge[edge] for edge in cut_edges])
-            cvars = [mvars[idx] for idx in var_idxs]
+                cut_edges = graph.get_cut_edges(nodes=cut_nodes)
 
-            # import pdb; pdb.set_trace()
-            model.addConstr(grb.quicksum(cvars) >= 2.0, 'subtour-nonintegral')
-            # model.update()
+                var_idxs = sorted([self.idx_by_edge[edge] for edge in cut_edges])
+                cvars = [mvars[idx] for idx in var_idxs]
+
+                model.addConstr(grb.quicksum(cvars) >= 2.0, 'subtour-nonintegral')
+                # model.update()
 
         return True
 
@@ -338,22 +383,31 @@ class TspBranchAndCut(object):
         if grb.GRB.OPTIMAL != model.status:
             raise StandardError('model was not solved to optimality')
 
-        for mvar in model.getVars():
+        best_idx = None
+        best_var = None
+        best_val = None
+
+        for idx,mvar in enumerate(model.getVars()):
             val = mvar.getAttr('X')
             if abs(val - int(val)) != 0.0:
-                model1 = grb.Model.copy(model)
-                m1var  = model1.getVarByName(mvar.getAttr('VarName'))
-                model1.addConstr(m1var == math.floor(val))
-                model1.update()
+                if (best_val is None) or (abs(val - 0.5) < best_val):
+                    best_val = abs(val - 0.5)
+                    best_var = mvar
+                    best_idx = idx
 
-                model2 = grb.Model.copy(model)
-                m2var  = model2.getVarByName(mvar.getAttr('VarName'))
-                model2.addConstr(m2var == math.ceil(val))
-                model2.update()
+        print('(best_idx,best_val) = ({},{})'.format(best_idx,best_val))
 
-                return (model1, model2)
+        model1 = grb.Model.copy(model)
+        m1var  = model1.getVarByName(best_var.getAttr('VarName'))
+        model1.addConstr(m1var == 0.0)
+        model1.update()
 
-        return ()
+        model2 = grb.Model.copy(model)
+        m2var  = model2.getVarByName(best_var.getAttr('VarName'))
+        model2.addConstr(m2var == 1.0)
+        model2.update()
+
+        return (model1, model2)
 
 
     def model_to_str(self, model, indent=0):

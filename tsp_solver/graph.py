@@ -196,6 +196,8 @@ class Graph(object):
         min_cut_value = float("inf")
         min_cut_nodes = []
 
+        all_cuts = []
+
         while merged_graph.num_nodes > 1:
             # print('-'*20)
             # print('  min_cut_value = {}'.format(min_cut_value))
@@ -225,12 +227,18 @@ class Graph(object):
 
             merged_graph = merged_graph._merge_nodes(node1=penultimate_node, node2=last_node)
 
+            all_cuts.append((current_cut_value, [item for item in flatten(current_cut_nodes, list_or_tuple)]))
+
             if current_cut_value < min_cut_value:
                 min_cut_value = current_cut_value
                 min_cut_nodes = current_cut_nodes
 
-        min_cut_nodes = [item for item in flatten(min_cut_nodes, list_or_tuple)]
-        return min_cut_value, min_cut_nodes
+        all_cuts = sorted(all_cuts, key=lambda x: x[0])
+
+        # min_cut_nodes = [item for item in flatten(min_cut_nodes, list_or_tuple)]
+        # return min_cut_value, min_cut_nodes
+
+        return all_cuts
 
 
     def _find_next_connected_node(self, target_nodes):
