@@ -211,7 +211,9 @@ class Graph(object):
             # print('merged_graph,num_nodes = {}'.format(merged_graph.num_nodes))
 
             penultimate_node = None
-            last_node        = merged_graph.nodes[0]
+            # last_node        = merged_graph.nodes[0]
+            import random
+            last_node        = merged_graph.nodes[random.randint(0,len(merged_graph.nodes)-1)]
 
             node_set = set([last_node])
 
