@@ -982,12 +982,10 @@ if __name__ == '__main__':
     import sys
 
     ##
-    ## Read the dataset
+    ## Read the dataset from stdin
     ##
 
-    filename = sys.argv[1]
-    with open(filename, 'r') as fd:
-        dataset = Dataset(istream=fd)
+    dataset = Dataset(istream=sys.stdin)
 
     edges            = dataset.edges
     nodes            = dataset.nodes
@@ -1003,26 +1001,6 @@ if __name__ == '__main__':
         import cProfile, pstats, StringIO
         prof = cProfile.Profile()
         prof.enable()
-
-    # nodes = range(6)
-    # edges = []
-    # for idx1 in xrange(len(nodes)-1):
-    #     for idx2 in xrange(idx1+1,len(nodes)):
-    #         edges.append((nodes[idx1],nodes[idx2]))
-
-    # distance_by_edge = {}
-    # for edge in edges:
-    #     distance_by_edge[edge] = 1.0
-
-    # distance_by_edge[(0,3)] = 2.0
-    # distance_by_edge[(0,4)] = 2.0
-    # distance_by_edge[(0,5)] = 2.0
-    # distance_by_edge[(1,3)] = 2.0
-    # distance_by_edge[(1,4)] = 2.0
-    # distance_by_edge[(1,5)] = 2.0
-    # distance_by_edge[(2,3)] = 2.0
-    # distance_by_edge[(2,4)] = 2.0
-    # distance_by_edge[(2,5)] = 2.0
 
     start_time = time.time()
     bc = TspBranchAndCut(nodes=nodes, edges=edges, cost_by_edge=distance_by_edge)
