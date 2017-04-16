@@ -44,7 +44,6 @@ class TspBranchAndCut(object):
 
         self.queue           = []
 
-        self.vars          = None
         self.best_cost     = None
         self.best_model    = None
 
@@ -978,6 +977,54 @@ class TspBranchAndCut(object):
         return ''.join(lines)
 
 
+    def get_cost_by_edge(self, edge):
+        if edge in self.cost_by_edge:
+            return self.cost_by_edge[edge]
+        else:
+            return self.cost_by_edge[(edge[1],edge[0])]
+
+
+    def best_tour(self):
+        if self.best_cost is None:
+            raise StandardError('there is no best tour')
+
+        graph, soln = self.convert_model(self.best_model)
+
+        soln_edges = [graph.edge_by_idx[idx] for idx in xrange(len(soln)) if soln[idx] == 1.0]
+
+        cur_edge = soln_edges[0]
+        tour_edges = [ (cur_edge[0],cur_edge[1]), (cur_edge[1],cur_edge[0]) ]
+        tour = [ (cur_edge[0], cur_edge[1], self.get_cost_by_edge(cur_edge)) ]
+
+        while len(tour) != len(soln_edges):
+            starting_node = cur_edge[1]
+
+            edge_found = False
+            for edge in soln_edges:
+                if starting_node in edge:
+                    # print('  edge: {}'.format(edge))
+                    if edge in tour_edges:
+                        continue
+
+                    if edge[0] == starting_node:
+                        tour_edge = (edge[0],edge[1])
+                    else:
+                        tour_edge = (edge[1],edge[0])
+
+                    tour.append( (tour_edge[0], tour_edge[1], self.get_cost_by_edge(tour_edge)) )
+                    tour_edges.append( (edge[0],edge[1]) )
+                    tour_edges.append( (edge[1],edge[0]) )
+
+                    cur_edge = tour_edge
+                    edge_found = True
+                    break
+
+            if not edge_found:
+                raise StandardError('best solution is apparently not a tour - doh!')
+
+        return tour
+
+
 if __name__ == '__main__':
     import sys
 
@@ -1008,6 +1055,12 @@ if __name__ == '__main__':
     end_time = time.time()
     print('BEST COST: {}'.format(bc.best_cost))
     print('elapsed: {:+1.5e}'.format(end_time - start_time))
+
+    total_cost = 0.0
+    for node1,node2,cost in bc.best_tour():
+        print('{:<3s} {:<3s} {}'.format(node1, node2, cost))
+        total_cost += cost
+    print('The cost of the best tour is: {}'.format(total_cost))
 
 
     if enable_profiler:
