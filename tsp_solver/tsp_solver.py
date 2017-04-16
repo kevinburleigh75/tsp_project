@@ -985,8 +985,10 @@ if __name__ == '__main__':
     ## Read the dataset
     ##
 
-    filename         = sys.argv[1]
-    dataset          = Dataset(filename)
+    filename = sys.argv[1]
+    with open(filename, 'r') as fd:
+        dataset = Dataset(istream=fd)
+
     edges            = dataset.edges
     nodes            = dataset.nodes
     distance_by_edge = dataset.distance_by_edge

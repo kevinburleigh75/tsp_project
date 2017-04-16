@@ -3,8 +3,7 @@ import re
 
 class Dataset(object):
 
-    def __init__(self, filename):
-        self.filename = filename
+    def __init__(self, istream):
 
         ##
         ## Open and read the file, removing extra whitespaces,
@@ -12,11 +11,10 @@ class Dataset(object):
         ##
 
         lines = deque()
-        with open(filename, 'r') as fd:
-            for line in fd:
-                ss = line.strip()
-                if ss != '' and not re.match(r'^#', line):
-                    lines.append(ss)
+        for line in istream:
+            ss = line.strip()
+            if ss != '' and not re.match(r'^#', line):
+                lines.append(ss)
 
         ##
         ## Extract the header information from the first line.
@@ -88,4 +86,6 @@ if __name__ == '__main__':
     import sys
     filename = sys.argv[1]
     print('filename = {}'.format(filename))
-    ds = Dataset(filename=filename)
+    with open(filename, 'r') as fd:
+        ds = Dataset(istream=fd)
+
