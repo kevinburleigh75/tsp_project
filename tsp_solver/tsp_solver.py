@@ -55,6 +55,21 @@ class TspBranchAndCut(object):
         self.logger = logging.getLogger(self.__class__.__name__)
 
 
+    def solve(self):
+        self.solve_start_time = time.time()
+
+        initial_model = self.create_initial_model()
+        self.add_model_to_pool(model=initial_model, obj_lb=-float('inf'))
+
+        while not self.model_pool_is_empty():
+            model = self.remove_model_from_pool()
+
+            for obj_lb,new_model in self.process_model(model):
+                self.add_model_to_pool(model=new_model, obj_lb=obj_lb)
+
+        self.solve_end_time = time.time()
+
+
     def create_initial_model(self):
         ##
         ## Formulate the initial model, which consists of:
@@ -75,6 +90,130 @@ class TspBranchAndCut(object):
         model.setParam('OutputFlag', False)
 
         return model
+
+
+    def process_model(self, model):
+        last_soln = cur_soln = None
+
+        new_model_info = []
+
+        while True:
+            model.update()
+            # print('elapsed: {:+1.5e} optimizing: id: {} bc: {} ql: {} mq: {} qmin: {:+1.5e} qmax: {:+1.5e} nc: {}'.format(
+            #     time.time() - start_time,
+            #     id(model),
+            #     self.best_cost,
+            #     self.model_pool_size(),
+            #     self.max_model_pool_size,
+            #     min_item[0],
+            #     max_item[0],
+            #     len(model.getConstrs())
+            # ))
+            model.optimize()
+
+            last_soln = cur_soln
+
+            if self.solution_is_infeasible(model):
+                cur_soln = None
+                break
+
+            cur_soln = model.getAttr('X')
+
+            if cur_soln == last_soln:
+                self.logger.warn('=== NO PROGRESS WAS MADE BY NEWLY ADDED CUTS ===')
+
+            # num_nonbinary = len([val for val in cur_soln if (val != 0) and (val != 1)])
+            # num_notclose  = len([val for val in cur_soln if (abs(val - 0) > 1e-6) and (abs(val - 1) > 1e-6)])
+            # print('num nonbinary/nonclose: {} / {}'.format(num_nonbinary, num_notclose))
+
+            # print('value / status: {:+1.5e} {}'.format(model.getAttr('ObjVal'), model.status))
+
+            if not self.solution_can_become_new_best(model):
+                break
+
+            if self.solution_is_tour(model):
+                if self.solution_is_new_best(model):
+                    self.update_best(model)
+                break
+
+            if self.add_cuts_to_model(model):
+                continue
+
+            if self.solution_is_integral(model):
+                raise StandardError('integral non-tour solution was left unimproved')
+
+            branch_models = self.create_branch_models(model)
+            if len(branch_models) == 0:
+                raise StandardError('no branch models could be found')
+
+            for branch_model in branch_models:
+                new_model_info.append( (model.getAttr('ObjVal'), branch_model) )
+
+            break
+
+        return new_model_info
+
+
+    def add_cuts_to_model(self, model):
+
+        stop_on_first = False
+
+        constraints_were_added = False
+
+        if stop_on_first:
+            constraints_were_added = constraints_were_added | self.add_objective_constraints(model)
+            constraints_were_added = constraints_were_added | self.add_comb_constraints(model)
+            constraints_were_added = constraints_were_added | self.add_integral_subtour_constraints(model)
+            constraints_were_added = constraints_were_added | self.add_nonintegral_subtour_constraints(model)
+            constraints_were_added = constraints_were_added | self.add_gomory_constraints(model)
+        else:
+            new_constraints = self.add_comb_constraints(model)
+            constraints_were_added = constraints_were_added | new_constraints
+
+            new_constraints = self.add_integral_subtour_constraints(model)
+            constraints_were_added = constraints_were_added | new_constraints
+
+            new_constraints = self.add_nonintegral_subtour_constraints(model)
+            constraints_were_added = constraints_were_added | new_constraints
+
+            new_constraints = self.add_gomory_constraints(model)
+            constraints_were_added = constraints_were_added | new_constraints
+
+            new_constraints = self.add_objective_constraints(model)
+            constraints_were_added = constraints_were_added | new_constraints
+
+        return constraints_were_added
+
+
+    def create_branch_models(self, model):
+        if grb.GRB.OPTIMAL != model.status:
+            raise StandardError('model was not solved to optimality')
+
+        best_idx = None
+        best_var = None
+        best_val = None
+
+        for idx,mvar in enumerate(model.getVars()):
+            val = mvar.getAttr('X')
+            if abs(val - int(val)) != 0.0:
+                if (best_val is None) or (abs(val - 0.5) < best_val):
+                    best_val = abs(val - 0.5)
+                    best_var = mvar
+                    best_idx = idx
+
+        # print('(best_idx,best_val) = ({},{})'.format(best_idx,best_val))
+
+        model1 = grb.Model.copy(model)
+        m1var  = model1.getVarByName(best_var.getAttr('VarName'))
+        model1.addConstr(m1var == 0.0)
+        model1.update()
+
+        model2 = grb.Model.copy(model)
+        m2var  = model2.getVarByName(best_var.getAttr('VarName'))
+        model2.addConstr(m2var == 1.0)
+        model2.update()
+
+        return (model1, model2)
 
 
     def add_model_to_pool(self, model, obj_lb):
@@ -109,110 +248,6 @@ class TspBranchAndCut(object):
 
     def model_pool_is_empty(self):
         return self.model_pool_size() == 0
-
-
-    def solve(self):
-        self.solve_start_time = time.time()
-
-        initial_model = self.create_initial_model()
-        self.add_model_to_pool(model=initial_model, obj_lb=-float('inf'))
-
-        while not self.model_pool_is_empty():
-            model = self.remove_model_from_pool()
-
-            last_soln = cur_soln = None
-            while True:
-                model.update()
-                # print('elapsed: {:+1.5e} optimizing: id: {} bc: {} ql: {} mq: {} qmin: {:+1.5e} qmax: {:+1.5e} nc: {}'.format(
-                #     time.time() - start_time,
-                #     id(model),
-                #     self.best_cost,
-                #     self.model_pool_size(),
-                #     self.max_model_pool_size,
-                #     min_item[0],
-                #     max_item[0],
-                #     len(model.getConstrs())
-                # ))
-                model.optimize()
-
-                last_soln = cur_soln
-
-                if self.solution_is_infeasible(model):
-                    cur_soln = None
-                    break
-
-                cur_soln = model.getAttr('X')
-
-                num_nonbinary = len([val for val in cur_soln if (val != 0) and (val != 1)])
-                num_notclose  = len([val for val in cur_soln if (abs(val - 0) > 1e-6) and (abs(val - 1) > 1e-6)])
-                print('num nonbinary/nonclose: {} / {}'.format(num_nonbinary, num_notclose))
-
-                if last_soln == cur_soln:
-                    self.logger.warn('=== NO PROGRESS WAS MADE BE NEWLY ADDED CUTS ===')
-
-                print('value / status: {:+1.5e} {}'.format(model.getAttr('ObjVal'), model.status))
-
-                if not self.solution_can_become_new_best(model):
-                    break
-
-                if self.solution_is_tour(model):
-                    if self.solution_is_new_best(model):
-                        self.update_best(model)
-                    break
-
-                def update(name, new_constraints, constraints_were_added):
-                    if new_constraints:
-                        print(' == {} constraints were added =='.format(name))
-                    # else:
-                    #     print('no {} constraints were added'.format(name))
-                    return constraints_were_added | new_constraints
-
-                print('adding constraints')
-                constraints_were_added = False
-
-                new_constraints = self.add_comb_constraints(model)
-                constraints_were_added = update('comb', new_constraints, constraints_were_added)
-                if constraints_were_added:
-                    continue
-
-                new_constraints = self.add_integral_subtour_constraints(model)
-                constraints_were_added = update('integral subtour', new_constraints, constraints_were_added)
-                if constraints_were_added:
-                    continue
-
-                ## NOTE: This could adjust the RHS of a constraint, so it must be
-                ##       done last (to avoid screwing over the other algorithms) or
-                ##       any following algorithms must be skipped if this one acts.
-                new_constraints = self.add_objective_constraints(model)
-                constraints_were_added = update('objective', new_constraints, constraints_were_added)
-                if constraints_were_added:
-                    continue
-
-                new_constraints = self.add_gomory_constraints(model)
-                constraints_were_added = update('gomory', new_constraints, constraints_were_added)
-                if constraints_were_added:
-                    continue
-
-                new_constraints = self.add_nonintegral_subtour_constraints(model)
-                constraints_were_added = update('nonintegral subtour', new_constraints, constraints_were_added)
-                if constraints_were_added:
-                    continue
-
-
-                if constraints_were_added:
-                    continue
-                print('no constraints were added')
-
-                if not self.solution_is_integral(model):
-                    print('adding branches')
-                    models = self.create_branch_models(model)
-                    if len(models) == 0:
-                        raise StandardError('no branch models could be found')
-                    for branch_model in models:
-                        self.queue.append((model.getAttr('ObjVal'), branch_model))
-                    break
-                else:
-                    raise StandardError('integral non-tour solution was left unconstrained')
 
 
     def solution_is_infeasible(self, model):
@@ -294,7 +329,7 @@ class TspBranchAndCut(object):
         if (abs(obj_val - floor_obj_val) < 1e-6) or (abs(obj_val - ceil_obj_val) < 1e-6):
             return False
 
-        print('  adding objective constraint ({},{},{:+1.5e})'.format(obj_val, ceil_obj_val, ceil_obj_val - obj_val))
+        # print('  adding objective constraint ({},{},{:+1.5e})'.format(obj_val, ceil_obj_val, ceil_obj_val - obj_val))
 
         ##
         ## NOTE: This is a local cut (valid only for the current model given
@@ -325,8 +360,6 @@ class TspBranchAndCut(object):
 
             model.addConstr(grb.quicksum(cvars) >= ceil_obj_val, 'objective-roundup')
 
-
-        print('  objective constraints added')
         return True
 
 
@@ -931,37 +964,6 @@ class TspBranchAndCut(object):
         self.best_model = model
 
 
-    def create_branch_models(self, model):
-        if grb.GRB.OPTIMAL != model.status:
-            raise StandardError('model was not solved to optimality')
-
-        best_idx = None
-        best_var = None
-        best_val = None
-
-        for idx,mvar in enumerate(model.getVars()):
-            val = mvar.getAttr('X')
-            if abs(val - int(val)) != 0.0:
-                if (best_val is None) or (abs(val - 0.5) < best_val):
-                    best_val = abs(val - 0.5)
-                    best_var = mvar
-                    best_idx = idx
-
-        print('(best_idx,best_val) = ({},{})'.format(best_idx,best_val))
-
-        model1 = grb.Model.copy(model)
-        m1var  = model1.getVarByName(best_var.getAttr('VarName'))
-        model1.addConstr(m1var == 0.0)
-        model1.update()
-
-        model2 = grb.Model.copy(model)
-        m2var  = model2.getVarByName(best_var.getAttr('VarName'))
-        model2.addConstr(m2var == 1.0)
-        model2.update()
-
-        return (model1, model2)
-
-
     def model_to_str(self, model, indent=0):
         model.write('tmp.lp')
         lines = deque()
@@ -1057,8 +1059,9 @@ if __name__ == '__main__':
     bc = TspBranchAndCut(nodes=nodes, edges=edges, cost_by_edge=distance_by_edge)
     bc.solve()
     end_time = time.time()
-    print('BEST COST: {}'.format(bc.best_cost))
-    print('elapsed: {:+1.5e}'.format(end_time - start_time))
+
+    # print('BEST COST: {}'.format(bc.best_cost))
+    # print('elapsed: {:+1.5e}'.format(end_time - start_time))
 
     total_cost = 0.0
     for node1,node2,cost in bc.best_tour():
