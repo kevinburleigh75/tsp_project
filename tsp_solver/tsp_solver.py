@@ -8,12 +8,11 @@ import re
 import random
 import time
 
-
-random.seed(42)
-
 from array_utils import FloatArrayFormatter, BooleanArrayFormatter
 from dataset import Dataset
 from graph import Graph
+
+random.seed(42)
 
 
 def text_keys(text):
@@ -30,6 +29,7 @@ def tuple_keys(tpl):
         keys.extend(text_keys(item))
     return keys
 
+
 class TspBranchAndCut(object):
 
     def __init__(self, nodes, edges, cost_by_edge):
@@ -43,10 +43,10 @@ class TspBranchAndCut(object):
         self.edge_by_idx = {idx: edge for idx,edge in enumerate(self.edges)}
         self.idx_by_edge = {edge: idx for idx,edge in enumerate(self.edges)}
 
-        self.queue           = []
+        self.queue = []
 
-        self.best_cost     = None
-        self.best_model    = None
+        self.best_cost  = None
+        self.best_model = None
 
         self.max_model_pool_size = 0
 
@@ -62,12 +62,15 @@ class TspBranchAndCut(object):
         self.add_model_to_pool(model=initial_model, obj_lb=-float('inf'))
 
         while not self.model_pool_is_empty():
-            model = self.remove_model_from_pool()
+            model = self.remove_next_model_from_pool()
 
             for obj_lb,new_model in self.process_model(model):
                 self.add_model_to_pool(model=new_model, obj_lb=obj_lb)
 
         self.solve_end_time = time.time()
+
+        self.logger.info('BEST COST: {}'.format(self.best_cost))
+        self.logger.info('elapsed: {:+1.5e}'.format(self.solve_end_time - self.solve_start_time))
 
 
     def create_initial_model(self):
@@ -92,6 +95,21 @@ class TspBranchAndCut(object):
         return model
 
 
+    def record_stats(self, model):
+        min_obj_lb, max_obj_lb = self.get_model_pool_obj_bounds()
+
+        self.logger.info('elapsed: {:+1.5e} optimized: id: {} bc: {} ql: {} mq: {} qmin: {:+1.5e} qmax: {:+1.5e} nc: {}'.format(
+            time.time() - self.solve_start_time,
+            id(model),
+            self.best_cost,
+            self.model_pool_size(),
+            self.max_model_pool_size,
+            min_obj_lb,
+            max_obj_lb,
+            len(model.getConstrs())
+        ))
+
+
     def process_model(self, model):
         last_soln = cur_soln = None
 
@@ -99,17 +117,8 @@ class TspBranchAndCut(object):
 
         while True:
             model.update()
-            # print('elapsed: {:+1.5e} optimizing: id: {} bc: {} ql: {} mq: {} qmin: {:+1.5e} qmax: {:+1.5e} nc: {}'.format(
-            #     time.time() - start_time,
-            #     id(model),
-            #     self.best_cost,
-            #     self.model_pool_size(),
-            #     self.max_model_pool_size,
-            #     min_item[0],
-            #     max_item[0],
-            #     len(model.getConstrs())
-            # ))
             model.optimize()
+            self.record_stats(model)
 
             last_soln = cur_soln
 
@@ -156,7 +165,7 @@ class TspBranchAndCut(object):
 
     def add_cuts_to_model(self, model):
 
-        stop_on_first = False
+        stop_on_first = True
 
         constraints_were_added = False
 
@@ -220,9 +229,9 @@ class TspBranchAndCut(object):
         self.queue.append((obj_lb, model))
 
 
-    def remove_model_from_pool(self):
+    def remove_next_model_from_pool(self):
         if self.best_cost is None:
-            self.logger.info('popping from queue - max')
+            self.logger.info('no best - popping from queue - max')
             item = max(self.queue)
         else:
             use_min = random.randint(1, 100) < 30
@@ -248,6 +257,17 @@ class TspBranchAndCut(object):
 
     def model_pool_is_empty(self):
         return self.model_pool_size() == 0
+
+
+    def get_model_pool_obj_bounds(self):
+        if self.model_pool_is_empty():
+            min_obj_lb = -float('inf')
+            max_obj_lb = -float('inf')
+        else:
+            min_obj_lb, _ = min(self.queue)
+            max_obj_lb, _ = max(self.queue)
+
+        return (min_obj_lb, max_obj_lb)
 
 
     def solution_is_infeasible(self, model):
@@ -319,9 +339,6 @@ class TspBranchAndCut(object):
 
 
     def add_objective_constraints(self, model):
-        if self.solution_is_infeasible(model):
-            return False
-
         obj_val = model.getAttr('ObjVal')
         ceil_obj_val  = math.ceil(obj_val)
         floor_obj_val = math.floor(obj_val)
@@ -1055,20 +1072,14 @@ if __name__ == '__main__':
         prof = cProfile.Profile()
         prof.enable()
 
-    start_time = time.time()
-    bc = TspBranchAndCut(nodes=nodes, edges=edges, cost_by_edge=distance_by_edge)
-    bc.solve()
-    end_time = time.time()
-
-    # print('BEST COST: {}'.format(bc.best_cost))
-    # print('elapsed: {:+1.5e}'.format(end_time - start_time))
+    tsp_bc = TspBranchAndCut(nodes=nodes, edges=edges, cost_by_edge=distance_by_edge)
+    tsp_bc.solve()
 
     total_cost = 0.0
-    for node1,node2,cost in bc.best_tour():
+    for node1,node2,cost in tsp_bc.best_tour():
         print('{:<3s} {:<3s} {}'.format(node1, node2, cost))
         total_cost += cost
     print('The cost of the best tour is: {}'.format(total_cost))
-
 
     if enable_profiler:
         prof.disable()
