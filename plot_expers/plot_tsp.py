@@ -17,7 +17,7 @@ def plot_solution(nodes, edges, solution_str):
 
     pos_by_node = {node: node.coords for node in nodes}
 
-    edges_by_code = {code: set() for code in ['1', 'N', '0', 'Z', '5', '-']}
+    edges_by_code = {code: set() for code in ['1', 'N', '0', 'Z', '5', 'L', 'H']}
     for idx,edge in enumerate(edges):
         code = solution_str[idx]
         edges_by_code[code].add( (edge.node1,edge.node2) )
@@ -52,7 +52,7 @@ def plot_solution(nodes, edges, solution_str):
         ax         = axes,
         pos        = pos_by_node,
         edgelist   = edges_by_code['5'],
-        edge_color = 'r',
+        edge_color = 'm',
     )
 
     nx.draw_networkx_edges(graph,
@@ -65,8 +65,15 @@ def plot_solution(nodes, edges, solution_str):
     nx.draw_networkx_edges(graph,
         ax         = axes,
         pos        = pos_by_node,
-        edgelist   = edges_by_code['-'],
-        edge_color = 'm',
+        edgelist   = edges_by_code['L'],
+        edge_color = 'g',
+    )
+
+    nx.draw_networkx_edges(graph,
+        ax         = axes,
+        pos        = pos_by_node,
+        edgelist   = edges_by_code['H'],
+        edge_color = 'r',
     )
 
     #     if code == '1':

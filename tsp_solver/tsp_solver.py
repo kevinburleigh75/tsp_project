@@ -326,10 +326,12 @@ class TspBranchAndCut(object):
                 data.append('Z')
             elif abs(xx - 1.0) < 1e-8:
                 data.append('N')
-            elif abs(xx - 5.0) < 1e-8:
+            elif abs(xx - 0.5) < 1e-8:
                 data.append('5')
-            elif (xx >= 0.0) and (xx <= 1.0):
-                data.append('-')
+            elif (xx >= 0.0) and (xx <= 0.5):
+                data.append('L')
+            elif (xx >= 0.5) and (xx <= 1.0):
+                data.append('H')
             else:
                 data.append('E')
         return ''.join(data)
