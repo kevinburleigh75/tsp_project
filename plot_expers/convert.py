@@ -6,7 +6,7 @@ def convert(istream, ostream):
     nodes = []
 
     for line in istream:
-        match_obj = re.match(r'^\s*(\d+)\s+(\d+)\s+(\d+)\s*$', line)
+        match_obj = re.match(r'^\s*(\d+)\s+(\S+)\s+(\S+)\s*$', line)
         if match_obj:
             node = int(match_obj.group(1)) - 1
             xx   = float(match_obj.group(2))

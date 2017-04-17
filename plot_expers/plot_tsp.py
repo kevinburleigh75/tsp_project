@@ -104,12 +104,11 @@ if __name__ == '__main__':
     import re
     import sys
 
-    coord_filename = sys.argv[1]
-    info_filename  = sys.argv[2]
-    soln_id_str    = sys.argv[3]
+    dataset_name   = sys.argv[1]
+    soln_id_str    = sys.argv[2]
 
     node_by_name = {}
-    with open(coord_filename, 'r') as fd:
+    with open(dataset_name+'.coords', 'r') as fd:
         for line in fd:
             match_obj = re.match(r'^\s*(\d+)\s+(\S+)\s+(\S+)\s*$', line)
             if match_obj:
@@ -123,7 +122,7 @@ if __name__ == '__main__':
 
     edges    = []
     soln_str = None
-    with open(info_filename, 'r') as fd:
+    with open(dataset_name+'.info', 'r') as fd:
         for line in fd:
             match_obj = re.match(r'^.*?NODES:\s+(.*)\s*$', line)
             if match_obj:
@@ -142,7 +141,7 @@ if __name__ == '__main__':
                         raise StandardError('invalid edge: {} {}'.format(name1, name2))
                     edges.append( Edge(node1=node_by_name[name1], node2=node_by_name[name2], cost=1.0) )
 
-            match_obj = re.match(soln_id_str + r'.*\s(\S+)\s*$', line)
+            match_obj = re.search(soln_id_str + r'.*\s(\S+)\s*$', line)
             if match_obj:
                 soln_str = match_obj.group(1)
 
