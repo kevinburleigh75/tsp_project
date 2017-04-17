@@ -1,6 +1,7 @@
 from collections import deque, namedtuple
 
 import gurobipy as grb
+import logging
 import math
 import numpy as np
 import re
@@ -47,10 +48,14 @@ class TspBranchAndCut(object):
         self.best_cost     = None
         self.best_model    = None
 
-        self.max_queue_len = 0
+        self.max_model_pool_size = 0
+
+        self.solve_start_time = None
+
+        self.logger = logging.getLogger(self.__class__.__name__)
 
 
-    def solve(self):
+    def create_initial_model(self):
         ##
         ## Formulate the initial model, which consists of:
         ##   - minimizing the sum of selected edges
@@ -62,8 +67,6 @@ class TspBranchAndCut(object):
         ##        0.0 <= x_e <= 1   for e in edges
         ##
 
-        start_time = time.time()
-
         model          = grb.Model('tsp')
         xx             = model.addVars(self.edges, lb=0.0, ub=1.0, vtype=grb.GRB.CONTINUOUS, name='xx', obj=self.cost_by_edge)
         degree_constrs = model.addConstrs((xx.sum(node,'*') + xx.sum('*',node) == 2.0 for node in self.nodes), 'degree')
@@ -71,91 +74,70 @@ class TspBranchAndCut(object):
 
         model.setParam('OutputFlag', False)
 
-        use_min = True
-        self.queue.append((float('inf'), grb.Model.copy(model)))
+        return model
 
-        while len(self.queue) != 0:
-            if len(self.queue) > self.max_queue_len:
-                self.max_queue_len = len(self.queue)
 
-            min_item = min(self.queue)
-            max_item = max(self.queue)
+    def add_model_to_pool(self, model, obj_lb):
+        self.queue.append((obj_lb, model))
 
-            # if use_min:
-            #     print('popping from queue - min')
-            #     item = min(self.queue)
-            # else:
-            #     print('popping from queue - max')
-            #     item = max(self.queue)
-            # use_min = not use_min
 
-            # if self.best_cost is None:
-            #     print('popping from queue - max')
-            #     item = max(self.queue)
-            # else:
-            #     print('popping from queue - min')
-            #     item = min(self.queue)
-
-            # item = min(self.queue)
-            # item = max(self.queue)
-
-            # use_min = random.randint(1, 100) > 90
-            # if use_min:
-            #     print('popping from queue - min')
-            #     item = min(self.queue)
-            # else:
-            #     print('popping from queue - max')
-            #     item = max(self.queue)
-            # use_min = not use_min
-
-            # if self.best_cost is None:
-            #     print('popping from queue - max')
-            #     item = max(self.queue)
-            # else:
-            #     if use_min:
-            #         print('popping from queue - min')
-            #         item = min(self.queue)
-            #     else:
-            #         print('popping from queue - max')
-            #         item = max(self.queue)
-            #     use_min = not use_min
-
-            if self.best_cost is None:
-                print('popping from queue - max')
-                item = max(self.queue)
+    def remove_model_from_pool(self):
+        if self.best_cost is None:
+            self.logger.info('popping from queue - max')
+            item = max(self.queue)
+        else:
+            use_min = random.randint(1, 100) < 30
+            if use_min:
+                self.logger.info('popping from queue - min')
+                item = min(self.queue)
             else:
-                use_min = random.randint(1, 100) < 30
-                if use_min:
-                    print('popping from queue - min')
-                    item = min(self.queue)
-                else:
-                    print('popping from queue - max')
-                    item = max(self.queue)
+                self.logger.info('popping from queue - max')
+                item = max(self.queue)
 
-            self.queue.remove(item)
-            (_, model) = item
+        self.queue.remove(item)
+        (_, model) = item
 
-            last_soln = None
-            cur_soln  = None
+        if self.model_pool_size() > self.max_model_pool_size:
+            self.max_model_pool_size = self.model_pool_size()
 
+        return model
+
+
+    def model_pool_size(self):
+        return len(self.queue)
+
+
+    def model_pool_is_empty(self):
+        return self.model_pool_size() == 0
+
+
+    def solve(self):
+        self.solve_start_time = time.time()
+
+        initial_model = self.create_initial_model()
+        self.add_model_to_pool(model=initial_model, obj_lb=-float('inf'))
+
+        while not self.model_pool_is_empty():
+            model = self.remove_model_from_pool()
+
+            last_soln = cur_soln = None
             while True:
                 model.update()
-                print('elapsed: {:+1.5e} optimizing: id: {} bc: {} ql: {} mq: {} qmin: {:+1.5e} qmax: {:+1.5e} nc: {}'.format(
-                    time.time() - start_time,
-                    id(model),
-                    self.best_cost,
-                    len(self.queue),
-                    self.max_queue_len,
-                    min_item[0],
-                    max_item[0],
-                    len(model.getConstrs())
-                ))
+                # print('elapsed: {:+1.5e} optimizing: id: {} bc: {} ql: {} mq: {} qmin: {:+1.5e} qmax: {:+1.5e} nc: {}'.format(
+                #     time.time() - start_time,
+                #     id(model),
+                #     self.best_cost,
+                #     self.model_pool_size(),
+                #     self.max_model_pool_size,
+                #     min_item[0],
+                #     max_item[0],
+                #     len(model.getConstrs())
+                # ))
                 model.optimize()
 
                 last_soln = cur_soln
 
                 if self.solution_is_infeasible(model):
-                    print('  infeasible')
                     cur_soln = None
                     break
 
@@ -166,18 +148,15 @@ class TspBranchAndCut(object):
                 print('num nonbinary/nonclose: {} / {}'.format(num_nonbinary, num_notclose))
 
                 if last_soln == cur_soln:
-                    print('=== NO PROGRESS ===')
+                    self.logger.warn('=== NO PROGRESS WAS MADE BE NEWLY ADDED CUTS ===')
 
                 print('value / status: {:+1.5e} {}'.format(model.getAttr('ObjVal'), model.status))
 
                 if not self.solution_can_become_new_best(model):
-                    print('  cannot become best')
                     break
 
                 if self.solution_is_tour(model):
-                    print('  tour')
                     if self.solution_is_new_best(model):
-                        print('  new best')
                         self.update_best(model)
                     break
 
@@ -237,22 +216,33 @@ class TspBranchAndCut(object):
 
 
     def solution_is_infeasible(self, model):
-        return grb.GRB.INFEASIBLE == model.status
+        is_infeasible = grb.GRB.INFEASIBLE == model.status
+
+        self.logger.debug('is_infeasible = {}'.format(is_infeasible))
+
+        return is_infeasible
 
 
     def solution_can_become_new_best(self, model):
         if grb.GRB.OPTIMAL != model.status:
-            return False
-        if self.best_cost is None:
-            return True
-        if model.getAttr('ObjVal') < self.best_cost:
-            return True
-        return False
+            can_become_new_best = False
+        elif self.best_cost is None:
+            can_become_new_best = True
+        else:
+            can_become_new_best = (model.getAttr('ObjVal') < self.best_cost)
+
+        self.logger.debug('can become new best = {}'.format(can_become_new_best))
+
+        return can_become_new_best
 
 
     def solution_is_tour(self, model):
         graph, xx = self.convert_model(model)
-        return graph.is_tour(solution=xx)
+        is_tour = graph.is_tour(solution=xx)
+
+        self.logger.debug('is tour = {}'.format(is_tour))
+
+        return is_tour
 
 
     def convert_model(self, model):
@@ -920,14 +910,24 @@ class TspBranchAndCut(object):
 
     def solution_is_new_best(self, model):
         if grb.GRB.OPTIMAL != model.status:
-            return False
-        return (self.best_cost is None) or (model.getAttr('ObjVal') < self.best_cost)
+            is_new_best = False
+        elif self.best_cost is None:
+            is_new_best = True
+        else:
+            is_new_best = model.getAttr('ObjVal') < self.best_cost
+
+        return is_new_best
 
 
     def update_best(self, model):
         if grb.GRB.OPTIMAL != model.status:
             raise StandardError('model was not solved to optimality')
-        self.best_cost  = model.getAttr('ObjVal')
+
+        new_best_cost = model.getAttr('ObjVal')
+
+        self.logger.info('new best {} (old = {})'.format(new_best_cost, self.best_cost))
+
+        self.best_cost  = new_best_cost
         self.best_model = model
 
 
@@ -1026,7 +1026,11 @@ class TspBranchAndCut(object):
 
 
 if __name__ == '__main__':
+    import logging
+    import logging.config
     import sys
+
+    logging.config.fileConfig('logging.conf')
 
     ##
     ## Read the dataset from stdin
