@@ -154,7 +154,7 @@ class TspBranchAndCut(object):
 
     def add_cuts_to_model(self, model):
 
-        stop_on_first = True
+        stop_on_first = False
 
         constraints_were_added = False
 
@@ -163,7 +163,7 @@ class TspBranchAndCut(object):
             constraints_were_added = constraints_were_added | self.add_comb_constraints(model)
             constraints_were_added = constraints_were_added | self.add_integral_subtour_constraints(model)
             constraints_were_added = constraints_were_added | self.add_nonintegral_subtour_constraints(model)
-            constraints_were_added = constraints_were_added | self.add_gomory_constraints(model)
+            # constraints_were_added = constraints_were_added | self.add_gomory_constraints(model)
         else:
             new_constraints = self.add_comb_constraints(model)
             constraints_were_added = constraints_were_added | new_constraints
@@ -174,8 +174,8 @@ class TspBranchAndCut(object):
             new_constraints = self.add_nonintegral_subtour_constraints(model)
             constraints_were_added = constraints_were_added | new_constraints
 
-            new_constraints = self.add_gomory_constraints(model)
-            constraints_were_added = constraints_were_added | new_constraints
+            # new_constraints = self.add_gomory_constraints(model)
+            # constraints_were_added = constraints_were_added | new_constraints
 
             new_constraints = self.add_objective_constraints(model)
             constraints_were_added = constraints_were_added | new_constraints
@@ -187,22 +187,58 @@ class TspBranchAndCut(object):
         if grb.GRB.OPTIMAL != model.status:
             raise StandardError('model was not solved to optimality')
 
-        best_idx = None
-        best_var = None
-        best_val = None
-
         xx = model.getAttr('X')
         self.logger.debug('BRANCH SOLUTION: {}'.format(self.encode_solution(xx)))
 
-        for idx,mvar in enumerate(model.getVars()):
-            val = mvar.getAttr('X')
-            if abs(val - int(val)) != 0.0:
-                if (best_val is None) or (abs(val - 0.5) < best_val):
-                    best_val = abs(val - 0.5)
-                    best_var = mvar
-                    best_idx = idx
+        best_var  = None
 
-        # print('(best_idx,best_val) = ({},{})'.format(best_idx,best_val))
+        if True:
+            ##
+            ## Branch on the most costly nonintegral edge.
+            ##
+
+            best_idx  = None
+            best_cost = None
+
+            for idx,mvar in enumerate(model.getVars()):
+                val = mvar.getAttr('X')
+                if abs(val - int(val)) != 0.0:
+                    edge = self.edge_by_idx[idx]
+                    cost = self.cost_by_edge[edge]
+
+                    if (best_cost is None) or (cost > best_cost):
+                        best_cost = cost
+                        best_var  = mvar
+                        best_idx  = idx
+        elif False:
+            ##
+            ## Branch on most costly edge of node with most costly non-zero edges.
+            ##
+
+            best_node = None
+            best_edge = None
+            best_cost = None
+
+            cost_by_node  = {node: 0.0   for node in self.nodes}
+            edges_by_node = {node: set() for node in self.nodes}
+
+            for edge in self.edges:
+                edge_idx = self.idx_by_edge[edge]
+                if (xx[edge_idx] != 0.0) and (xx[edge_idx] != 1.0):
+                    edge_cost = self.cost_by_edge[edge]
+                    edges_by_node[edge[0]].add(edge)
+                    edges_by_node[edge[1]].add(edge)
+                    cost_by_node[edge[0]] += edge_cost
+                    cost_by_node[edge[1]] += edge_cost
+
+            best_node = max(cost_by_node, key=lambda node: cost_by_node[node])
+            best_edge = max(edges_by_node[best_node], key=lambda edge: self.cost_by_edge[edge])
+
+            best_var = model.getVars()[self.idx_by_edge[best_edge]]
+
+        if best_var is None:
+            raise StandardError('could not create branches on solution')
+        # print('(best_idx,best_cost) = ({},{})'.format(best_idx,best_cost))
 
         model1 = grb.Model.copy(model)
         m1var  = model1.getVarByName(best_var.getAttr('VarName'))
@@ -398,7 +434,7 @@ class TspBranchAndCut(object):
         for constr in model.getConstrs():
             if constr.getAttr('Sense') != sense:
                 continue
-            if constr.getAttr('RHS') != rhs:
+            if abs(constr.getAttr('RHS') - rhs) > 1e-6:
                 continue
 
             row = model.getRow(constr)
@@ -688,333 +724,6 @@ class TspBranchAndCut(object):
 
         return constraints_were_added
 
-    def _model_to_matrices(self, model):
-        ##
-        ## A*x = b
-        ## B*xB + N*xB = b
-        ##
-        ## B = [ BM BS ]
-        ## xB = [xBM xBS].T
-        ##
-        ## BS*xBS + NS*xNS = bBS
-        ## xBS = [ xB.T xS.T ].T
-        ##
-
-        basic_model_vars    = []
-        nonbasic_model_vars = []
-        for var in model.getVars():
-            if var.getAttr('VBasis') == 0:
-                basic_model_vars.append(var)
-            else:
-                nonbasic_model_vars.append(var)
-
-        slack_constrs    = []
-        for constr in model.getConstrs():
-            if constr.getAttr('CBasis') == 0:
-                slack_constrs.append(constr)
-
-        NBMV = len(basic_model_vars)          ## Number of Basic     Model Variables
-        NNMV = len(nonbasic_model_vars)       ## Number of Non-basic Model Variables
-        NSV  = len(slack_constrs)             ## Number of Slack Variables
-        NBV  = NBMV + NSV                     ## Number of Basic Variables (model + slack)
-        NMV  = NBMV + NNMV                    ## Number of Model Variables (basic + nonbasic)
-
-        row_idx_by_constr = {constr: idx for idx,constr in enumerate(model.getConstrs())}
-        constr_by_row_idx = {idx: constr for constr,idx in row_idx_by_constr.items()}
-
-        B_col_idx_by_basic_model_var = {var: idx for idx,var in enumerate(basic_model_vars)}
-        B_basic_model_var_by_col_idx = {idx: var for var,idx in B_col_idx_by_basic_model_var.items()}
-
-        B_col_idx_by_slack_constr = {var: NBMV+idx for idx,var in enumerate(slack_constrs)}
-        B_slack_constr_by_col_idx = {idx: var      for var,idx in B_col_idx_by_slack_constr.items()}
-
-        N_col_idx_by_nonbasic_model_var = {var: idx for idx,var in enumerate(nonbasic_model_vars)}
-        N_nonbasic_model_var_by_col_idx = {idx: var for var,idx in N_col_idx_by_nonbasic_model_var.items()}
-
-        B_NBVxNBV = np.zeros((NBV,NBV))
-        xB_NBVx1  = np.zeros((NBV,1))
-
-        N_NBVxNNMV = np.zeros((NBV,NNMV))
-        xN_NNMVx1  = np.zeros((NNMV,1))
-
-        b_NBVx1 = np.zeros((NBV,1))
-
-        for constr in model.getConstrs():
-            row_idx = row_idx_by_constr[constr]
-            row     = model.getRow(constr)
-
-            b_NBVx1[row_idx,0] = constr.getAttr('RHS')
-
-            for var_idx in xrange(row.size()):
-                var   = row.getVar(var_idx)
-                val   = var.getAttr('X')
-                coeff = row.getCoeff(var_idx)
-
-                if var.getAttr('VBasis') == 0:
-                    col_idx = B_col_idx_by_basic_model_var[var]
-                    B_NBVxNBV[row_idx,col_idx] = coeff
-                    xB_NBVx1[col_idx,0]        = val
-                else:
-                    col_idx = N_col_idx_by_nonbasic_model_var[var]
-                    N_NBVxNNMV[row_idx,col_idx] = coeff
-                    xN_NNMVx1[col_idx,0]        = val
-
-            if constr.getAttr('CBasis') == 0:
-                col_idx = B_col_idx_by_slack_constr[constr]
-                B_NBVxNBV[row_idx,col_idx] = 1.0
-                xB_NBVx1[col_idx,0]        = constr.getAttr('Slack')
-
-        ##
-        ## Sanity check: B*xB + N*xN = b
-        ##
-
-        sanity_lhs = B_NBVxNBV.dot(xB_NBVx1) + N_NBVxNNMV.dot(xN_NNMVx1)
-        sanity_rhs = b_NBVx1
-
-        # import pdb; pdb.set_trace()
-
-        if not np.allclose(sanity_lhs, sanity_rhs):
-            import pdb; pdb.set_trace()
-            raise StandardError('sanity check failed')
-
-        # bHat_NBVx1 = B_NBVxNBV.dot(xB_NBVx1) + N_NBVxNNMV.dot(xN_NNMVx1)
-        # if not np.allclose(bHat_NBVx1, b_NBVx1):
-        #     import pdb; pdb.set_trace()
-        #     raise StandardError('sanity check on b failed')
-
-
-        Matrices = namedtuple('Matrices',
-            'B_NBVxNBV N_NBVxNNMV ' +
-            'b_NBVx1 xB_NBVx1 xN_NNMVx1 ' +
-            'constr_by_row_idx row_idx_by_constr ' +
-            'B_basic_model_var_by_col_idx B_col_idx_by_basic_model_var ' +
-            'B_slack_constr_by_col_idx B_col_idx_by_slack_constr ' +
-            'N_nonbasic_model_var_by_col_idx N_col_idx_by_nonbasic_model_var ' +
-            'NBMV NNMV NBV NSV NMV '
-        )
-
-        matrices = Matrices(
-            constr_by_row_idx               = constr_by_row_idx,
-            row_idx_by_constr               = row_idx_by_constr,
-            B_NBVxNBV                       = B_NBVxNBV,
-            N_NBVxNNMV                      = N_NBVxNNMV,
-            b_NBVx1                         = b_NBVx1,
-            xB_NBVx1                        = xB_NBVx1,
-            xN_NNMVx1                       = xN_NNMVx1,
-            B_basic_model_var_by_col_idx    = B_basic_model_var_by_col_idx,
-            B_col_idx_by_basic_model_var    = B_col_idx_by_basic_model_var,
-            B_slack_constr_by_col_idx       = B_slack_constr_by_col_idx,
-            B_col_idx_by_slack_constr       = B_col_idx_by_slack_constr,
-            N_nonbasic_model_var_by_col_idx = N_nonbasic_model_var_by_col_idx,
-            N_col_idx_by_nonbasic_model_var = N_col_idx_by_nonbasic_model_var,
-            NBMV = NBMV,
-            NNMV = NNMV,
-            NBV  = NBV,
-            NSV  = NSV,
-            NMV  = NMV,
-        )
-
-        return matrices
-
-    def add_gomory_constraints(self, model):
-        if self.solution_is_integral(model):
-            return False
-
-        mm = self._model_to_matrices(model)
-
-        Binv_NBVxNBV     = np.linalg.solve(mm.B_NBVxNBV, np.eye(mm.NBV))
-        tableau_NBVxNNMV = np.dot(Binv_NBVxNBV, mm.N_NBVxNNMV)
-
-        constraints_were_added = False
-
-        for constr in model.getConstrs():
-            if constraints_were_added:
-                break
-
-            ##
-            ## Skip constraints whose slack variable is in the basis,
-            ## since it could be anything
-            ##
-
-            if constr.getAttr('CBasis') == 0:
-                # print('  GC: constr has basic slack variable')
-                continue
-
-            row_idx = mm.row_idx_by_constr[constr]
-            # print('  GC: constr name = {}'.format(mm.A_constr_by_row_idx[row_idx].getAttr('ConstrName')))
-
-            ##
-            ## Skip previously-generated Gomory cuts.
-            ##
-
-            if constr.getAttr('ConstrName') == 'gomory':
-                # raise StandardError('here')
-                continue
-
-            ##
-            ## Check if the basic variable is non-integral.
-            ## If not, move on.
-            ##
-
-            basic_val = mm.xB_NBVx1[row_idx,0]
-            Binv_b    = np.asscalar(np.dot(Binv_NBVxNBV[[row_idx],:], mm.b_NBVx1))
-
-            if (abs(Binv_b - math.floor(Binv_b)) > 1e-10) and (abs(Binv_b - math.ceil(Binv_b)) > 1e-10):
-                # print('  GC: non-integral Binv*b: {:+1.6e}'.format(Binv_b))
-                continue
-            basic_val = math.floor(basic_val - Binv_b + 0.5)
-
-            # if abs(Binv_b) > 1e-10:
-            #     print('  GC: non-zero Binv*b: {:+1.6e}'.format(Binv_b))
-            #     continue
-
-
-            # if abs(Binv_b) > 1e-6:
-            #     print('  GC: Binv*b too large: {:+1.6e}'.format(Binv_b))
-            #     continue
-
-            frac_basic = basic_val - math.floor(basic_val)
-            if (frac_basic < 1e-6) or (frac_basic > 1.0 - 1e-6):
-                continue
-
-            # print('  GC: frac_basic = {:+1.16e}'.format(frac_basic))
-
-            ##
-            ## Sanity check.
-            ##
-
-            sanity_lhs = basic_val
-            sanity_rhs = 0.0 #np.asscalar(np.dot(Binv_NBVxNBV[[row_idx],:], mm.b_NBVx1))
-            # print('  GC: initial sanity_rhs {:+1.5e}'.format(sanity_rhs))
-
-            for col_idx in xrange(mm.NNMV):
-                nonbasic_var   = mm.N_nonbasic_model_var_by_col_idx[col_idx]
-                if nonbasic_var.getAttr('VBasis') == 0:
-                    raise StandardError('variable should not be basic')
-                nonbasic_val   = nonbasic_var.getAttr('X')
-                nonbasic_coeff = tableau_NBVxNNMV[row_idx,col_idx]
-
-                if (nonbasic_val != nonbasic_var.getAttr('LB')) and (nonbasic_val != nonbasic_var.getAttr('UB')):
-                    raise StandardError('nonbasic variable should be at one of its bounds: {}'.format(nonbasic_var))
-
-                sanity_rhs -= nonbasic_coeff * nonbasic_val
-
-            # print('  GC: sanity: lhs {:+1.6e} rhs {:+1.6e}'.format(sanity_lhs, sanity_rhs))
-            if abs(sanity_rhs - sanity_lhs) > 1e-6:
-                print('  GC: constr {} {:+1.5e} {}'.format(constr.getAttr('CBasis'), constr.getAttr('Slack'), constr))
-                import pdb; pdb.set_trace()
-                raise StandardError('sanity check failed')
-
-            ##
-            ## Create four sets of nonbasic model variables:
-            ##   - JJp: at lower bound, tableau coeff > 0
-            ##   - JJn: at lower bound, tableau coeff < 0
-            ##   - KKp: at upper bound, tableau coeff > 0
-            ##   - KKn: at upper bound, tableau coeff < 0
-            ##
-
-            JJp = []
-            JJn = []
-            KKp = []
-            KKn = []
-            for col_idx in xrange(mm.NNMV):
-                nonbasic_var   = mm.N_nonbasic_model_var_by_col_idx[col_idx]
-                nonbasic_val   = nonbasic_var.getAttr('X')
-                nonbasic_coeff = tableau_NBVxNNMV[row_idx,col_idx]
-
-                if abs(nonbasic_coeff) < 1e-8:
-                    continue
-
-                lb = nonbasic_var.getAttr('LB')
-                ub = nonbasic_var.getAttr('UB')
-                if lb != 0.0:
-                    raise StandardError('incorrect lower bound: {:+1.6e}'.format(lb))
-                if ub != 1.0:
-                    raise StandardError('incorrect upper bound: {:+1.6e}'.format(ub))
-
-                if nonbasic_val == lb:
-                    if nonbasic_coeff > 0.0:
-                        JJp.append( (nonbasic_var,nonbasic_coeff) )
-                    elif nonbasic_coeff < 0.0:
-                        JJn.append( (nonbasic_var,nonbasic_coeff) )
-                elif nonbasic_val == ub:
-                    if nonbasic_coeff > 0.0:
-                        KKp.append( (nonbasic_var,nonbasic_coeff) )
-                    elif nonbasic_coeff < 0.0:
-                        KKn.append( (nonbasic_var,nonbasic_coeff) )
-                else:
-                    raise StandardError('nonbasic variable {:+1.6e} not at either bound'.format(nonbasic_var))
-
-            ##
-            ## Create a mixed-integer Gomory cut, and ensure
-            ## that it is really violated by the current solution.
-            ##
-
-            expr_coeffs = []
-            expr_vars   = []
-            expr_lhs    = 0.0
-            expr_rhs    = 1.0
-
-            # print('  GC: JJp:')
-            for var, coeff in JJp:
-                new_coeff = coeff / (1.0 - frac_basic)
-                expr_coeffs.append(new_coeff)
-                expr_vars.append(var)
-
-                expr_lhs += new_coeff * var.getAttr('X')
-                ## lower bound is zero so nothing to add to rhs
-
-                # print('    GC: {:+1.16e} {}'.format(new_coeff, var))
-
-            # print('  GC: JJn:')
-            for var, coeff in JJn:
-                new_coeff = -coeff / frac_basic
-                expr_coeffs.append(new_coeff)
-                expr_vars.append(var)
-
-                expr_lhs += new_coeff * var.getAttr('X')
-                ## lower bound is zero so nothing to add to rhs
-
-                # print('    GC: {:+1.16e} {}'.format(new_coeff, var))
-
-            # print('  GC: KKp:')
-            for var, coeff in KKp:
-                new_coeff = coeff / frac_basic
-                expr_coeffs.append(-new_coeff)
-                expr_vars.append(var)
-
-                expr_lhs -= new_coeff * var.getAttr('X')
-                expr_rhs -= new_coeff
-
-                # print('    GC: {:+1.16e} {}'.format(new_coeff, var))
-
-            # print('  GC: KKn:')
-            for var, coeff in KKn:
-                new_coeff = -coeff / (1.0 - frac_basic)
-                expr_coeffs.append(-new_coeff)
-                expr_vars.append(var)
-
-                expr_lhs -= new_coeff * var.getAttr('X')
-                expr_rhs -= new_coeff
-
-                # print('    GC: {:+1.16e} {}'.format(new_coeff, var))
-
-            # expr_rhs -= 1e-6
-            # print('  GC: lhs {:+1.16e} rhs {:+1.16e}'.format(expr_lhs, expr_rhs))
-            if expr_lhs >= expr_rhs - 1e-6:
-                raise StandardError('  GC: cut is not violated: {:+1.16e} is not >= {:+1.16e}'.format(expr_lhs, expr_rhs))
-
-            expr = grb.LinExpr(expr_coeffs, expr_vars) >= expr_rhs
-            # print('GC: constraint: {}'.format(expr))
-
-            model.addConstr(expr, name='gomory')
-
-            # print('GC: added constraint')
-
-            constraints_were_added = True
-
-        return constraints_were_added
-
 
     def coeffs_to_expr(self, coeff_by_var, model):
         expr_coeffs = []
@@ -1087,7 +796,11 @@ if __name__ == '__main__':
     ## Read the dataset from stdin
     ##
 
-    dataset = Dataset(istream=sys.stdin)
+    if len(sys.argv) > 1:
+        with open(sys.argv[1], 'r') as fd:
+            dataset = Dataset(istream=fd)
+    else:
+        dataset = Dataset(istream=sys.stdin)
 
     edges            = dataset.edges
     nodes            = dataset.nodes
@@ -1097,7 +810,7 @@ if __name__ == '__main__':
     ## Solve the problem.
     ##
 
-    enable_profiler = False
+    enable_profiler = True
 
     if enable_profiler:
         import cProfile, pstats, StringIO
