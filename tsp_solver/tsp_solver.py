@@ -54,6 +54,10 @@ class TspBranchAndCut(object):
 
         self.logger = logging.getLogger(self.__class__.__name__)
 
+        self.logger.debug('NODES: {}'.format(' '.join(self.nodes)))
+        self.logger.debug('EDGES: {}'.format(' '.join(['({} {})'.format(node1,node2) for node1,node2 in self.edges])))
+        self.logger.debug('COSTS: {}'.format(' '.join(['{}'.format(self.cost_by_edge[edge]) for edge in self.edges])))
+
 
     def solve(self):
         self.solve_start_time = time.time()
@@ -93,21 +97,6 @@ class TspBranchAndCut(object):
         model.setParam('OutputFlag', False)
 
         return model
-
-
-    def record_stats(self, model):
-        min_obj_lb, max_obj_lb = self.get_model_pool_obj_bounds()
-
-        self.logger.info('elapsed: {:+1.5e} optimized: id: {} bc: {} ql: {} mq: {} qmin: {:+1.5e} qmax: {:+1.5e} nc: {}'.format(
-            time.time() - self.solve_start_time,
-            id(model),
-            self.best_cost,
-            self.model_pool_size(),
-            self.max_model_pool_size,
-            min_obj_lb,
-            max_obj_lb,
-            len(model.getConstrs())
-        ))
 
 
     def process_model(self, model):
@@ -201,6 +190,9 @@ class TspBranchAndCut(object):
         best_idx = None
         best_var = None
         best_val = None
+
+        xx = model.getAttr('X')
+        self.logger.debug('BRANCH SOLUTION: {}'.format(self.encode_solution(xx)))
 
         for idx,mvar in enumerate(model.getVars()):
             val = mvar.getAttr('X')
@@ -300,12 +292,100 @@ class TspBranchAndCut(object):
         return is_tour
 
 
+    def solution_is_integral(self, model):
+        if grb.GRB.OPTIMAL != model.status:
+            return False
+
+        for mvar in model.getVars():
+            val = mvar.getAttr('X')
+            if val != int(val):
+                return False
+
+        return True
+
+
+    def solution_is_new_best(self, model):
+        if grb.GRB.OPTIMAL != model.status:
+            is_new_best = False
+        elif self.best_cost is None:
+            is_new_best = True
+        else:
+            is_new_best = model.getAttr('ObjVal') < self.best_cost
+
+        return is_new_best
+
+
+    def encode_solution(self, soln):
+        data = []
+        for xx in soln:
+            if xx == 0.0:
+                data.append('0')
+            elif xx == 1.0:
+                data.append('1')
+            elif abs(xx - 0.0) < 1e-8:
+                data.append('Z')
+            elif abs(xx - 1.0) < 1e-8:
+                data.append('N')
+            elif abs(xx - 5.0) < 1e-8:
+                data.append('5')
+            elif (xx >= 0.0) and (xx <= 1.0):
+                data.append('-')
+            else:
+                data.append('E')
+        return ''.join(data)
+
+
+    def update_best(self, model):
+        if grb.GRB.OPTIMAL != model.status:
+            raise StandardError('model was not solved to optimality')
+
+        new_best_cost = model.getAttr('ObjVal')
+        new_best_xx   = model.getAttr('X')
+
+
+        self.logger.debug('NEW BEST TOUR: {}'.format(self.encode_solution(new_best_xx)))
+        self.logger.info('new best {} (old = {})'.format(new_best_cost, self.best_cost))
+
+        self.best_cost  = new_best_cost
+        self.best_model = model
+
+
+    def model_to_str(self, model, indent=0):
+        model.write('tmp.lp')
+        lines = deque()
+        with open('tmp.lp', 'r') as fd:
+            lines.extend(' '*indent + line for line in fd)
+        lines.popleft()
+        lines.popleft()
+
+        if grb.GRB.OPTIMAL == model.status:
+            for mvar in model.getVars():
+                lines.append(' '*indent + '{} = {:+1.5e}\n'.format(mvar.getAttr('VarName'), mvar.getAttr('X')))
+
+        return ''.join(lines)
+
+
     def convert_model(self, model):
         solution = model.getAttr('X')
         weight_by_edge = {edge: solution[idx] for idx,edge in enumerate(self.edges)}
         graph = Graph(nodes=self.nodes, edges=self.edges, weight_by_edge=weight_by_edge)
 
         return (graph, solution)
+
+
+    def record_stats(self, model):
+        min_obj_lb, max_obj_lb = self.get_model_pool_obj_bounds()
+
+        self.logger.info('elapsed: {:+1.5e} optimized: id: {} bc: {} ql: {} mq: {} qmin: {:+1.5e} qmax: {:+1.5e} nc: {}'.format(
+            time.time() - self.solve_start_time,
+            id(model),
+            self.best_cost,
+            self.model_pool_size(),
+            self.max_model_pool_size,
+            min_obj_lb,
+            max_obj_lb,
+            len(model.getConstrs())
+        ))
 
 
     def is_duplicate_constraint(self, model, vars, coeffs, rhs, sense):
@@ -944,56 +1024,6 @@ class TspBranchAndCut(object):
                 expr_vars.append(var)
         expr = grb.LinExpr(expr_coeffs, expr_vars)
         return expr
-
-
-    def solution_is_integral(self, model):
-        if grb.GRB.OPTIMAL != model.status:
-            return False
-
-        for mvar in model.getVars():
-            val = mvar.getAttr('X')
-            if val != int(val):
-                return False
-
-        return True
-
-
-    def solution_is_new_best(self, model):
-        if grb.GRB.OPTIMAL != model.status:
-            is_new_best = False
-        elif self.best_cost is None:
-            is_new_best = True
-        else:
-            is_new_best = model.getAttr('ObjVal') < self.best_cost
-
-        return is_new_best
-
-
-    def update_best(self, model):
-        if grb.GRB.OPTIMAL != model.status:
-            raise StandardError('model was not solved to optimality')
-
-        new_best_cost = model.getAttr('ObjVal')
-
-        self.logger.info('new best {} (old = {})'.format(new_best_cost, self.best_cost))
-
-        self.best_cost  = new_best_cost
-        self.best_model = model
-
-
-    def model_to_str(self, model, indent=0):
-        model.write('tmp.lp')
-        lines = deque()
-        with open('tmp.lp', 'r') as fd:
-            lines.extend(' '*indent + line for line in fd)
-        lines.popleft()
-        lines.popleft()
-
-        if grb.GRB.OPTIMAL == model.status:
-            for mvar in model.getVars():
-                lines.append(' '*indent + '{} = {:+1.5e}\n'.format(mvar.getAttr('VarName'), mvar.getAttr('X')))
-
-        return ''.join(lines)
 
 
     def get_cost_by_edge(self, edge):
