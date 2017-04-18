@@ -174,8 +174,8 @@ class TspBranchAndCut(object):
                 constraints_were_added = True
             elif self.add_objective_constraints(model):
                 constraints_were_added = True
-            elif self.add_gomory_constraints(model):
-                constraints_were_added = True
+            # elif self.add_gomory_constraints(model):
+            #     constraints_were_added = True
         else:
             new_constraints = self.add_comb_constraints(model)
             constraints_were_added = constraints_were_added | new_constraints
@@ -885,7 +885,7 @@ class TspBranchAndCut(object):
         self.logger.debug('GC: matrices')
 
         Binv_NBVxNBV     = np.linalg.solve(mm.B_NBVxNBV, np.eye(mm.NBV))
-        tableau_NBVxNNMV = np.dot(Binv_NBVxNBV, mm.N_NBVxNNMV)
+        tableau_NBVxNNMV = -np.dot(Binv_NBVxNBV, mm.N_NBVxNNMV)
 
         self.logger.debug('GC: tableau')
 
@@ -927,6 +927,8 @@ class TspBranchAndCut(object):
                 return math.floor(xx + 0.5)
 
             basic_val = mm.xB_NBVx1[row_idx,0]
+            basic_var = mm.B_basic_model_var_by_col_idx[row_idx]
+            self.logger.debug('  GC: basic_var = {}'.format(basic_var))
             self.logger.debug('  GC: basic_val = {:+1.16e}'.format(basic_val))
             if abs(basic_val - round(basic_val)) < 1e-6:
                 self.logger.debug('  GC: integral-ish basic_val')
@@ -964,7 +966,7 @@ class TspBranchAndCut(object):
                 if (nonbasic_val != nonbasic_var.getAttr('LB')) and (nonbasic_val != nonbasic_var.getAttr('UB')):
                     raise StandardError('nonbasic variable should be at one of its bounds: {}'.format(nonbasic_var))
 
-                sanity_rhs -= nonbasic_coeff * nonbasic_val
+                sanity_rhs += nonbasic_coeff * nonbasic_val
 
             self.logger.debug('  GC: sanity: lhs {:+1.16e} rhs {:+1.16e}'.format(sanity_lhs, sanity_rhs))
             if abs(sanity_rhs - sanity_lhs) > 1e-8:

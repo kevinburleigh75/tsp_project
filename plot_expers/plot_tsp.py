@@ -8,7 +8,7 @@ import networkx as nx
 Node = namedtuple('Node', 'name coords')
 Edge = namedtuple('Edge', 'node1 node2 cost')
 
-def plot_solution(nodes, edges, solution_str):
+def plot_solution(nodes, edges, solution_str, title):
     graph = nx.Graph()
     graph.add_nodes_from(nodes)
 
@@ -75,6 +75,17 @@ def plot_solution(nodes, edges, solution_str):
         edgelist   = edges_by_code['H'],
         edge_color = 'r',
     )
+
+    label_pos_by_node = {node: (node.coords[0]-0.03, node.coords[1]) for node in nodes}
+    label_by_node     = {node: node.name for node in nodes}
+    nx.draw_networkx_labels(graph,
+        ax         = axes,
+        pos        = label_pos_by_node,
+        labels     = label_by_node,
+        font_size  = 10,
+    )
+
+    plt.title(title)
 
     #     if code == '1':
     #         color_by_edge[edge] = 'k'
@@ -148,5 +159,6 @@ if __name__ == '__main__':
     if soln_str is None:
         raise StandardError('could not find solution for: {}'.format(soln_id_str))
 
-    plot_solution(nodes=nodes, edges=edges, solution_str=soln_str)
+    title = '{} ({})'.format(dataset_name, soln_id_str)
+    plot_solution(nodes=nodes, edges=edges, solution_str=soln_str, title=title)
 
