@@ -682,7 +682,7 @@ class TspBranchAndCut(object):
                     external_node_intersection_count = {node: 0 for node in nodes}
                     for edge in one_edges:
                         for node in edge:
-                            if node not in nodes:
+                            if node not in cc_nodes:
                                 external_node_intersection_count[node] += 1
 
                     multiply_intersected_nodes = [node for node,count in external_node_intersection_count.items() if count > 1]
@@ -690,9 +690,9 @@ class TspBranchAndCut(object):
                     if len(multiply_intersected_nodes) == 0:
                         break
 
-                    # print('comb - multiply intersected nodes: {}'.format(multiply_intersected_nodes))
+                    self.logger.debug('    comb multiply intersected nodes: {}'.format(multiply_intersected_nodes))
                     for node in multiply_intersected_nodes:
-                        cc_nodes.append(node)
+                        cc_nodes.add(node)
                     cc_cut_edges = graph.get_cut_edges(nodes=cc_nodes)
                     one_edges = [edge for edge in cc_cut_edges if xx[graph.idx_by_edge[edge]] == 1.0]
 
@@ -700,7 +700,7 @@ class TspBranchAndCut(object):
                 one_edges = sorted(set(one_edges), key=tuple_keys)
 
                 if len(one_edges) == 1:
-                    # print('comb - subtour')
+                    self.logger.debug('    comb subtour')
 
                     handle_cut_edges = sorted(set(graph.get_cut_edges(nodes=cc_nodes)), key=tuple_keys)
                     handle_var_idxs  = sorted([self.idx_by_edge[edge] for edge in handle_cut_edges])
@@ -719,7 +719,7 @@ class TspBranchAndCut(object):
                     constraints_were_added = True
 
                 else:
-                    # print('comb - blossom H={} T={}'.format(cc_nodes,one_edges))
+                    self.logger.debug('    comb blossom H={} T={}'.format(cc_nodes,one_edges))
 
                     handle_cut_edges = sorted(set(graph.get_cut_edges(nodes=cc_nodes)), key=tuple_keys)
                     tooth_cut_edges  = [graph.get_cut_edges(nodes=tooth_nodes) for tooth_nodes in one_edges]
