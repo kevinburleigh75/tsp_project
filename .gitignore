@@ -1,2 +1,5 @@
 kenv/**
 **/*.pyc
+**/gurobi.log
+**/*.info
+run.log
