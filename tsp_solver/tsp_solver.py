@@ -135,14 +135,14 @@ class TspBranchAndCut(object):
             if not self.solution_can_become_new_best(model):
                 break
 
-            if self.solution_has_funky_values(model):
-                branch_models = self.create_funky_value_branch_models(model)
-                if len(branch_models) == 0:
-                    raise StandardError('no branch models could be found')
+            # if self.solution_has_funky_values(model):
+            #     branch_models = self.create_funky_value_branch_models(model)
+            #     if len(branch_models) == 0:
+            #         raise StandardError('no branch models could be found')
 
-                for branch_model in branch_models:
-                    new_model_info.append( (model.getAttr('ObjVal'), branch_model) )
-                break
+            #     for branch_model in branch_models:
+            #         new_model_info.append( (model.getAttr('ObjVal'), branch_model) )
+            #     break
 
             if self.solution_is_tour(model):
                 if self.solution_is_new_best(model):
@@ -185,8 +185,8 @@ class TspBranchAndCut(object):
                 constraints_were_added = True
             # elif self.add_gomory_constraints_A(model):
             #     constraints_were_added = True
-            elif self.add_gomory_constraints_B(model):
-                constraints_were_added = True
+            # elif self.add_gomory_constraints_B(model):
+            #     constraints_were_added = True
         else:
             new_constraints = self.add_comb_constraints(model)
             constraints_were_added = constraints_were_added | new_constraints
@@ -245,55 +245,20 @@ class TspBranchAndCut(object):
         xx = model.getAttr('X')
         self.logger.debug('BRANCH SOLUTION: {}'.format(self.encode_solution(xx)))
 
-        best_var  = None
+        best_idx = None
+        best_var = None
+        best_val = None
 
-        if True:
-            ##
-            ## Branch on the most costly nonintegral edge.
-            ##
-
-            best_idx  = None
-            best_cost = None
-
-            for idx,mvar in enumerate(model.getVars()):
-                val = mvar.getAttr('X')
-                if abs(val - int(val)) != 0.0:
-                    edge = self.edge_by_idx[idx]
-                    cost = self.cost_by_edge[edge]
-
-                    if (best_cost is None) or (cost > best_cost):
-                        best_cost = cost
-                        best_var  = mvar
-                        best_idx  = idx
-        elif False:
-            ##
-            ## Branch on most costly edge of node with most costly non-zero edges.
-            ##
-
-            best_node = None
-            best_edge = None
-            best_cost = None
-
-            cost_by_node  = {node: 0.0   for node in self.nodes}
-            edges_by_node = {node: set() for node in self.nodes}
-
-            for edge in self.edges:
-                edge_idx = self.idx_by_edge[edge]
-                if (xx[edge_idx] != 0.0) and (xx[edge_idx] != 1.0):
-                    edge_cost = self.cost_by_edge[edge]
-                    edges_by_node[edge[0]].add(edge)
-                    edges_by_node[edge[1]].add(edge)
-                    cost_by_node[edge[0]] += edge_cost
-                    cost_by_node[edge[1]] += edge_cost
-
-            best_node = max(cost_by_node, key=lambda node: cost_by_node[node])
-            best_edge = max(edges_by_node[best_node], key=lambda edge: self.cost_by_edge[edge])
-
-            best_var = model.getVars()[self.idx_by_edge[best_edge]]
+        for idx,mvar in enumerate(model.getVars()):
+            val = mvar.getAttr('X')
+            if abs(val - int(val)) != 0.0:
+                if (best_val is None) or (abs(val - 0.5) < best_val):
+                    best_val = abs(val - 0.5)
+                    best_var = mvar
+                    best_idx = idx
 
         if best_var is None:
             raise StandardError('could not create branches on solution')
-        # print('(best_idx,best_cost) = ({},{})'.format(best_idx,best_cost))
 
         model1 = grb.Model.copy(model)
         m1var  = model1.getVarByName(best_var.getAttr('VarName'))
@@ -587,10 +552,10 @@ class TspBranchAndCut(object):
         ## to every model in the queue.
         ##
 
-        # models = [mm for (_, mm) in self.queue]
-        # models.append(model)
-        models = [model]
-
+        models = [mm for (_, mm) in self.queue]
+        models.append(model)
+        # models = [model]
+#
         constraints_were_added = False
 
         for cur_model in models:
@@ -710,10 +675,10 @@ class TspBranchAndCut(object):
         ## to every model in the queue.
         ##
 
-        # models = [mm for (_, mm) in self.queue]
-        # for cur_model in models:
-        #     for var_idxs in non_dup_cuts:
-        #         add_constr_to_model(model=cur_model, var_idxs=var_idxs)
+        models = [mm for (_, mm) in self.queue]
+        for cur_model in models:
+            for var_idxs in non_dup_cuts:
+                add_constr_to_model(model=cur_model, var_idxs=var_idxs)
 
         if constraints_were_added:
             self.logger.debug('  added nonintegral subtour constraints')
@@ -769,9 +734,9 @@ class TspBranchAndCut(object):
                     handle_cut_edges = sorted(set(graph.get_cut_edges(nodes=cc_nodes)), key=tuple_keys)
                     handle_var_idxs  = sorted([self.idx_by_edge[edge] for edge in handle_cut_edges])
 
-                    # models = [mm for (_, mm) in self.queue]
-                    # models.append(model)
-                    models = [model]
+                    models = [mm for (_, mm) in self.queue]
+                    models.append(model)
+                    # models = [model]
 
                     for midx,model in enumerate(models):
 
@@ -799,9 +764,9 @@ class TspBranchAndCut(object):
 
                     # import pdb; pdb.set_trace()
 
-                    # models = [mm for (_, mm) in self.queue]
-                    # models.append(model)
-                    models = [model]
+                    models = [mm for (_, mm) in self.queue]
+                    models.append(model)
+                    # models = [model]
                     # expr_coeffs = [1.0 for var in it.chain(handle_vars, tooth_vars)]
                     # expr_vars   = [var for var in it.chain(handle_vars, tooth_vars)]
                     expr_rhs    = 3*len(one_edges) + 1
