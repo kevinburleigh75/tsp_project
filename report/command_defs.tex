@@ -1,0 +1,58 @@
+\usepackage{amsmath}
+\usepackage{bm}
+\usepackage{etoolbox}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{multicol}
+\usepackage{multido}
+\usepackage{relsize}
+\usepackage{tikz}
+\usetikzlibrary{hobby}
+
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+
+\setlength{\parindent}{4em}
+\setlength{\parskip}{1em}
+
+\let\oldhat\hat
+\renewcommand{\vec}[1]{\pmb{#1}}
+\renewcommand{\hat}[1]{\oldhat{\pmb{#1}}}
+\newcommand{\undersetvecexp}[4]{
+  \underset{ \mathsmaller{#2 \times #3} }
+           { \hphantom{{}^{#4}} \vec{#1} ^ {#4} }
+}
+\newcommand{\kunderset}[3]{
+  \underset{ \mathsmaller{#2 \times #3} }
+           { #1 }
+}
+\newcommand{\undersetvec}[3]{ \undersetvecexp{#1}{#2}{#3}{} }
+\newcommand{\abs}[1]{\lvert #1 \rvert}
+\newcommand{\lnorm}[2]{ {\left\lVert #2 \right\rVert}_#1 }
+\newcommand{\lnormexp}[3]{ {\left\lVert #3 \right\rVert}_#1^#2 }
+\newcommand{\bigbraces}[1]{ \left\{ #1 \right\} }
+\newcommand{\bigbrackets}[1]{ \left[ #1 \right] }
+\newcommand{\bigparens}[1]{ \left( #1 \right) }
+\newcommand{\kpartial}[2]{ \frac{\partial \, #1}{\partial \, #2} }
+
+\newcommand{\gausswithpeak}[4]{
+  ( (#4) *
+    (exp( ( -(#1-#2)^2 ) /
+          ( 2*(#3^2)   )  ) ) )
+}
+
+\newcommand{\KLogisticPdf}[3]{
+  % KLogisticPdf{mu}{sdev}{peak}
+  (#3) * 4
+  * exp( -(x-(#1)) /
+          ((#2)*sqrt(3)/pi))
+  / ((1 + exp(-(x-(#1)) /
+               ((#2)*sqrt(3)/pi)) )**2)
+}
+
+\newcommand{\KLogisticCdf}[3]{
+  % KLogisticCdf{mu}{sdev}{peak}
+  (#3) /
+  ( 1 + exp(-(x-(#1)) /
+             ((#2)*sqrt(3)/pi)) )
+}

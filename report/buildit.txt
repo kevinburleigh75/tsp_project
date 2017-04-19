@@ -1,0 +1,2 @@
+pdflatex --shell-escape tsp_report.tex
+pdflatex --shell-escape tsp_report.tex
