@@ -1,9 +1,11 @@
 \documentclass{article}
 
-\usepackage[utf8]{inputenc}
-\usepackage[english]{babel}
-
 \input{command_defs}
+
+\usepackage{graphicx}
+\graphicspath{ {../plot_expers/images/} }
+
+\usepackage{mathtools}
 
 \title{CAAM 471/571: Traveling Salesman Project}
 \date{2017-04-19}
@@ -15,8 +17,8 @@
 
 \lstset{frame=tb,
   language=Python,
-  aboveskip=3mm,
-  belowskip=3mm,
+  aboveskip=5mm,
+  belowskip=5mm,
   showstringspaces=false,
   columns=flexible,
   basicstyle={\small\ttfamily},
@@ -31,40 +33,47 @@
 }
 
 \section{Problem Description}
+\begin{flushleft}
+
 We were tasked
-to solve the Traveling Salesman Problem (TSP)
+to solve the Traveling Salesman Problem
 using the branch-and-cut method,
 utilizing Gurobi
 to solve only linear programming relaxations of integer programs.
 
 Given a graph $G = (N,E)$ with nodes $N$ and edges $E$,
 and an associated cost $c_e$ for each edge,
-the TSP can be formulated
-as the following integer program:
+the goal of the TSP
+is to find the least costly path
+which visits each node exactly once
+and returns to the starting node
+(a Hamiltonian cycle).
 
-\begin{alignat*}{3}
+The TSP can be formulated
+as the following integer program:
+\begin{equation} \label{eq:tspip}
+\begin{alignedat}{3}
  & \text{minimize}         & \sum_{e \in E}{c_e x_e} & \\
  & \text{subject to} \quad & \sum_{e \in \delta(\{n\})}{x_e} = 2, \quad & \forall n \in N \\
+ &                   \quad & \sum_{e \in \delta(S)}{x_e} \geq 2,  \quad & \forall S \subset N, S \neq \emptyset \\
  &                         & x_e \in \{ 0,1 \}, \quad                     & \forall e \in E
-\end{alignat*}
-
+\end{alignedat}
+\end{equation}
 where $x_e$ is a decision variable
 indicating whether or not
 the associated edge is part of the tour,
 and $\delta(S)$ is the set of edges
 in the cut of node set $S$.
-Each constraint in this formulation
+The first set of constraints in \eqref{eq:tspip}
 ensures that each node
 is entered exactly once
-and then exited exactly once
-along a different edge.
+and then exited exactly once.
+This leaves open the possibilty of subtours,
+which are eliminated by the second set of constraints.
 
-The LP relaxation of
-\begin{alignat*}{3}
- & \text{minimize}         & \sum_{e \in E}{c_e x_e} & \\
- & \text{subject to} \quad & \sum_{e \in \delta(\{n\})}{x_e} = 2, \quad & \forall n \in N \\
- &                         & 0 \leq x_e \leq 1, \quad                     & \forall e \in E
-\end{alignat*}
+\includegraphics[width=4in, height=4in]{pr76_optTour}
+
+\end{flushleft}
 
 \section{Algorithm}
 
@@ -113,6 +122,22 @@ class TspBranchAndCut(object):
 \subsection{The Initial Model}
 \begin{flushleft}
 
+The initial LP relaxation of \eqref{eq:tspip} is:
+\begin{equation} \label{eq:tsplpinit}
+\begin{alignedat}{3}
+ & \text{minimize}         & \sum_{e \in E}{c_e x_e} & \\
+ & \text{subject to} \quad & \sum_{e \in \delta(\{n\})}{x_e} = 2, \quad & \forall n \in N \\
+ &                         & 0 \leq x_e \leq 1, \quad                     & \forall e \in E
+\end{alignedat}
+\end{equation}
+where the decision variables $x_e$
+are now allowed to take any value
+between zero and one,
+and the subtour constraints
+have been removed
+(they will gradually be re-introduced
+as the algorithm progresses).
+
 \begin{lstlisting}
 ## tsp_solver.py
 class TspBranchAndCut(object):
@@ -134,6 +159,77 @@ class TspBranchAndCut(object):
 \end{lstlisting}
 
 \end{flushleft}
+
+\subsection{Model Processing}
+\begin{flushleft}
+
+Once a model has been pulled
+from the model pool,
+it is optimized using gurobi.
+
+If the model is infeasible,
+or if it cannot possibly yield a new best tour
+because its LP relaxation lower bound
+is greater than the current best tour cost,
+it is discarded
+(the 'bound' part of branch-and-cut)
+and processing stops.
+
+If the current solution
+is a valid tour
+(and therefore integral)
+with a cost less than that
+of the current best tour,
+the current solution becomes the new best tour
+and processing stops.
+
+Otherwise the current solution
+either non-integral or not a tour,
+so, if possible, new constraints
+are added to the model
+(the 'cut' part of branch-and-cut)
+and it is re-optimized.
+If no cuts could be added,
+new variable fixing models
+(where some non-integral $x_e$
+is forced to take on a value of 0 or 1)
+are created
+and returned to the caller
+(the 'branch' part of branch-and-cut).
+
+\begin{lstlisting}
+## tsp_solver.py
+class TspBranchAndCut(object):
+    def process_model(self, model):
+        new_model_info = []
+        while True:
+            model.update()
+            model.optimize()
+
+            if self.solution_is_infeasible(model):
+                break
+
+            if not self.solution_can_become_new_best(model):
+                break
+
+            if self.solution_is_tour(model):
+                if self.solution_is_new_best(model):
+                    self.update_best(model)
+                break
+
+            if self.add_cuts_to_model(model):
+                continue
+
+            branch_models = self.create_branch_models(model)
+            for branch_model in branch_models:
+                new_model_info.append( (model.getAttr('ObjVal'), branch_model) )
+
+            break
+
+        return new_model_info
+\end{lstlisting}
+\end{flushleft}
+
 
 Once we developed our algorithm for solving TSPBC,
 we looked to Python and the gurobipy module.
