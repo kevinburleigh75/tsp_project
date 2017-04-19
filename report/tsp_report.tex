@@ -32,14 +32,15 @@
 
 \section{Problem Description}
 We were tasked
-to solve the Traveling Salesman Problem
-using the Branch and Cut method
-(TSPBC),
-utilizing Gurobi.
+to solve the Traveling Salesman Problem (TSP)
+using the branch-and-cut method,
+utilizing Gurobi
+to solve only linear programming relaxations of integer programs.
 
 Given a graph $G = (N,E)$ with nodes $N$ and edges $E$,
 and an associated cost $c_e$ for each edge,
-the TSP can be formulated as:
+the TSP can be formulated
+as the following integer program:
 
 \begin{alignat*}{3}
  & \text{minimize}         & \sum_{e \in E}{c_e x_e} & \\
@@ -52,7 +53,11 @@ indicating whether or not
 the associated edge is part of the tour,
 and $\delta(S)$ is the set of edges
 in the cut of node set $S$.
-
+Each constraint in this formulation
+ensures that each node
+is entered exactly once
+and then exited exactly once
+along a different edge.
 
 The LP relaxation of
 \begin{alignat*}{3}
