@@ -152,9 +152,9 @@ if __name__ == '__main__':
                         raise StandardError('invalid edge: {} {}'.format(name1, name2))
                     edges.append( Edge(node1=node_by_name[name1], node2=node_by_name[name2], cost=1.0) )
 
-            match_obj = re.search(soln_id_str + r'.*\s(\S+)\s*$', line)
+            match_obj = re.search(soln_id_str + r'.*\s(SOLUTION|TOUR|CURRENT)\W.*\s(\S+)\s*$', line)
             if match_obj:
-                soln_str = match_obj.group(1)
+                soln_str = match_obj.group(2)
 
     if soln_str is None:
         raise StandardError('could not find solution for: {}'.format(soln_id_str))

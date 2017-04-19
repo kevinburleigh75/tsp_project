@@ -135,6 +135,15 @@ class TspBranchAndCut(object):
             if not self.solution_can_become_new_best(model):
                 break
 
+            if self.solution_has_funky_values(model):
+                branch_models = self.create_funky_value_branch_models(model)
+                if len(branch_models) == 0:
+                    raise StandardError('no branch models could be found')
+
+                for branch_model in branch_models:
+                    new_model_info.append( (model.getAttr('ObjVal'), branch_model) )
+                break
+
             if self.solution_is_tour(model):
                 if self.solution_is_new_best(model):
                     self.update_best(model)
@@ -174,8 +183,10 @@ class TspBranchAndCut(object):
                 constraints_were_added = True
             elif self.add_objective_constraints(model):
                 constraints_were_added = True
-            # elif self.add_gomory_constraints(model):
+            # elif self.add_gomory_constraints_A(model):
             #     constraints_were_added = True
+            elif self.add_gomory_constraints_B(model):
+                constraints_were_added = True
         else:
             new_constraints = self.add_comb_constraints(model)
             constraints_were_added = constraints_were_added | new_constraints
@@ -193,6 +204,38 @@ class TspBranchAndCut(object):
             constraints_were_added = constraints_were_added | new_constraints
 
         return constraints_were_added
+
+
+    def create_funky_value_branch_models(self, model):
+        if grb.GRB.OPTIMAL != model.status:
+            raise StandardError('model was not solved to optimality')
+
+        xx = model.getAttr('X')
+        self.logger.debug('FUNKY BRANCH SOLUTION: {}'.format(self.encode_solution(xx)))
+
+        models = []
+
+        for idx,mvar in enumerate(model.getVars()):
+            val = mvar.getAttr('X')
+            # if ((val != 1.0) and (val >= 1.0 - 1e-6)) or ((val != 0.0) and (val <= 0.0 + 1e-6)):
+            if (val > 1.0) or (val < 0.0):
+                self.logger.debug('  idx {:4d} val {:+1.16e} {}'.format(idx, val, mvar))
+
+                model1 = grb.Model.copy(model)
+                m1var  = model1.getVarByName(mvar.getAttr('VarName'))
+                model1.addConstr(m1var == 0.0)
+                model1.update()
+
+                model2 = grb.Model.copy(model)
+                m2var  = model2.getVarByName(mvar.getAttr('VarName'))
+                model2.addConstr(m2var == 1.0)
+                model2.update()
+
+                models.extend([model1, model2])
+
+                break
+
+        return models
 
 
     def create_branch_models(self, model):
@@ -352,6 +395,19 @@ class TspBranchAndCut(object):
         return True
 
 
+    def solution_has_funky_values(self, model):
+        if grb.GRB.OPTIMAL != model.status:
+            return False
+
+        for mvar in model.getVars():
+            val = mvar.getAttr('X')
+            # if ((val != 1.0) and (val >= 1.0 - 1e-6)) or ((val != 0.0) and (val <= 0.0 + 1e-6)):
+            if (val > 1.0) or (val < 0.0):
+                return True
+
+        return False
+
+
     def solution_is_new_best(self, model):
         if grb.GRB.OPTIMAL != model.status:
             is_new_best = False
@@ -370,12 +426,15 @@ class TspBranchAndCut(object):
                 data.append('0')
             elif xx == 1.0:
                 data.append('1')
-            elif abs(xx - 0.0) < 1e-8:
-                data.append('Z')
-            elif abs(xx - 1.0) < 1e-8:
-                data.append('N')
-            elif abs(xx - 0.5) < 1e-8:
+            elif xx == 0.5:
                 data.append('5')
+            elif xx < 0.0 or xx > 1.0:
+                self.logger.warn('UNKNOWN VALUE: {:+1.16e}'.format(xx))
+                data.append('E')
+            elif xx < 1e-8:
+                data.append('Z')
+            elif xx > 1.0 - 1e-8:
+                data.append('N')
             elif (xx >= 0.0) and (xx <= 0.5):
                 data.append('L')
             elif (xx >= 0.5) and (xx <= 1.0):
@@ -528,8 +587,9 @@ class TspBranchAndCut(object):
         ## to every model in the queue.
         ##
 
-        models = [mm for (_, mm) in self.queue]
-        models.append(model)
+        # models = [mm for (_, mm) in self.queue]
+        # models.append(model)
+        models = [model]
 
         constraints_were_added = False
 
@@ -578,7 +638,7 @@ class TspBranchAndCut(object):
         modified_graph, xx = self.convert_model(model)
         all_cuts = []
         iter_num = 0
-        while iter_num < 100:
+        while iter_num < 10:
             iter_num +=  1
 
             cur_cuts = modified_graph.find_min_cut()
@@ -599,13 +659,15 @@ class TspBranchAndCut(object):
             modified_graph = Graph(nodes=new_nodes, edges=new_edges, weight_by_edge=new_weights)
 
         all_cuts = sorted(all_cuts, key=lambda x: x[0])
+        if len(all_cuts) == 0:
+            return False
 
         ##
         ## If none of the min-cuts were less than 2.0, the subtour
         ## constraints are being met, so we're done.
         ##
 
-        if all_cuts[0][0] >= 2.0 - 1e-8:
+        if all_cuts[0][0] >= 2.0 - 1e-6:
             return False
 
         ##
@@ -633,7 +695,7 @@ class TspBranchAndCut(object):
 
         non_dup_cuts = []
         for (cut_value, cut_nodes) in all_cuts:
-            if cut_value >= 2.0 - 1e-8:
+            if cut_value >= 2.0:
                 break
 
             cut_edges = graph.get_cut_edges(nodes=cut_nodes)
@@ -648,10 +710,10 @@ class TspBranchAndCut(object):
         ## to every model in the queue.
         ##
 
-        models = [mm for (_, mm) in self.queue]
-        for cur_model in models:
-            for var_idxs in non_dup_cuts:
-                add_constr_to_model(model=cur_model, var_idxs=var_idxs)
+        # models = [mm for (_, mm) in self.queue]
+        # for cur_model in models:
+        #     for var_idxs in non_dup_cuts:
+        #         add_constr_to_model(model=cur_model, var_idxs=var_idxs)
 
         if constraints_were_added:
             self.logger.debug('  added nonintegral subtour constraints')
@@ -700,21 +762,28 @@ class TspBranchAndCut(object):
                 one_edges = sorted(set(one_edges), key=tuple_keys)
 
                 if len(one_edges) == 1:
-                    self.logger.debug('    comb subtour')
+                    # continue
+
+                    self.logger.debug('    comb subtour: N={}'.format(cc_nodes))
 
                     handle_cut_edges = sorted(set(graph.get_cut_edges(nodes=cc_nodes)), key=tuple_keys)
                     handle_var_idxs  = sorted([self.idx_by_edge[edge] for edge in handle_cut_edges])
 
-                    models = [mm for (_, mm) in self.queue]
-                    models.append(model)
+                    # models = [mm for (_, mm) in self.queue]
+                    # models.append(model)
+                    models = [model]
 
                     for midx,model in enumerate(models):
 
-                        mvars = model.getVars()
+                        mvars        = model.getVars()
+                        handle_vars  = [mvars[idx] for idx in handle_var_idxs]
+                        coeffs       = [1.0        for idx in handle_var_idxs]
 
-                        handle_vars = [mvars[idx] for idx in handle_var_idxs]
+                        if self.is_duplicate_constraint(model=model, vars=handle_vars, coeffs=coeffs, sense='>', rhs=2.0):
+                            return False
 
-                        model.addConstr(grb.quicksum(handle_vars) >= 2.0, name='comb-subtour')
+                        expr = grb.quicksum(handle_vars) >= 2.0
+                        model.addConstr(expr, name='comb-subtour')
 
                     constraints_were_added = True
 
@@ -728,9 +797,11 @@ class TspBranchAndCut(object):
                     handle_var_idxs = sorted([self.idx_by_edge[edge] for edge in handle_cut_edges])
                     tooth_var_idxs  = sorted([self.idx_by_edge[edge] for edge in tooth_cut_edges])
 
-                    models = [mm for (_, mm) in self.queue]
-                    models.append(model)
+                    # import pdb; pdb.set_trace()
 
+                    # models = [mm for (_, mm) in self.queue]
+                    # models.append(model)
+                    models = [model]
                     # expr_coeffs = [1.0 for var in it.chain(handle_vars, tooth_vars)]
                     # expr_vars   = [var for var in it.chain(handle_vars, tooth_vars)]
                     expr_rhs    = 3*len(one_edges) + 1
@@ -743,8 +814,10 @@ class TspBranchAndCut(object):
                         tooth_vars  = [mvars[idx] for idx in tooth_var_idxs]
 
                         expr = grb.quicksum(handle_vars) + grb.quicksum(tooth_vars) >= expr_rhs
-
+                        # self.logger.debug('  comb expr: {}'.format(expr))
                         model.addConstr(expr, name='comb')
+
+                    # import pdb; pdb.set_trace()
 
                     constraints_were_added = True
 
@@ -874,7 +947,7 @@ class TspBranchAndCut(object):
             return matrices
 
 
-    def add_gomory_constraints(self, model):
+    def add_gomory_constraints_A(self, model):
         if self.solution_is_integral(model):
             return False
 
@@ -976,11 +1049,254 @@ class TspBranchAndCut(object):
 
             ##
             ## Create four sets of nonbasic model variables:
+            ##   - JJp: at lower bound, tableau coeff > 0
+            ##   - JJn: at lower bound, tableau coeff < 0
+            ##   - KKp: at upper bound, tableau coeff > 0
+            ##   - KKn: at upper bound, tableau coeff < 0
+            ##
+
+            JJp = []
+            JJn = []
+            KKp = []
+            KKn = []
+            for col_idx in xrange(mm.NNMV):
+                nonbasic_var   = mm.N_nonbasic_model_var_by_col_idx[col_idx]
+                nonbasic_val   = nonbasic_var.getAttr('X')
+                nonbasic_coeff = tableau_NBVxNNMV[row_idx,col_idx]
+
+                # if abs(nonbasic_coeff) < 1e-6:
+                #     continue
+
+                lb = nonbasic_var.getAttr('LB')
+                ub = nonbasic_var.getAttr('UB')
+                if lb != 0.0:
+                    raise StandardError('incorrect lower bound: {:+1.6e}'.format(lb))
+                if ub != 1.0:
+                    raise StandardError('incorrect upper bound: {:+1.6e}'.format(ub))
+
+                if nonbasic_val == lb:
+                    if nonbasic_coeff > 0.0:
+                        JJp.append( (nonbasic_var,nonbasic_coeff) )
+                    elif nonbasic_coeff < 0.0:
+                        JJn.append( (nonbasic_var,nonbasic_coeff) )
+                elif nonbasic_val == ub:
+                    if nonbasic_coeff > 0.0:
+                        KKp.append( (nonbasic_var,nonbasic_coeff) )
+                    elif nonbasic_coeff < 0.0:
+                        KKn.append( (nonbasic_var,nonbasic_coeff) )
+                else:
+                    raise StandardError('nonbasic variable {:+1.6e} not at either bound'.format(nonbasic_var))
+
+            if (len(JJp) == 0) and (len(JJn) == 0) and (len(KKp) == 0) and (len(KKn) == 0):
+                self.logger.debug('  GC: non nontrivial coeffs in JJn,JJp,KKn,KKp')
+                continue
+
+            ##
+            ## Create a mixed-integer Gomory cut, and ensure
+            ## that it is really violated by the current solution.
+            ##
+
+            expr_coeffs = []
+            expr_vars   = []
+            expr_lhs    = 0.0
+            expr_rhs    = 0.0
+
+            # self.logger.debug('    GC: JJp:')
+            for var, coeff in JJp:
+                new_coeff = coeff / (1.0 - frac_basic)
+                expr_coeffs.append(new_coeff)
+                expr_vars.append(var)
+
+                expr_lhs += new_coeff * var.getAttr('X')
+                ## lower bound is zero so nothing to add to rhs
+
+                # self.logger.debug('      GC: {:+1.16e} {:+1.16e} {}'.format(coeff, new_coeff, var))
+
+            # self.logger.debug('    GC: JJn:')
+            for var, coeff in JJn:
+                new_coeff = -coeff / frac_basic
+                expr_coeffs.append(new_coeff)
+                expr_vars.append(var)
+
+                expr_lhs += new_coeff * var.getAttr('X')
+                ## lower bound is zero so nothing to add to rhs
+
+                # self.logger.debug('      GC: {:+1.16e} {:+1.16e} {}'.format(coeff, new_coeff, var))
+
+            # self.logger.debug('    GC: KKp:')
+            for var, coeff in KKp:
+                new_coeff = -coeff / frac_basic
+                expr_coeffs.append(new_coeff)
+                expr_vars.append(var)
+
+                expr_lhs += new_coeff * var.getAttr('X')
+                expr_rhs += new_coeff
+
+                # self.logger.debug('      GC: {:+1.16e} {:+1.16e} {}'.format(coeff, new_coeff, var))
+
+            # self.logger.debug('    GC: KKn:')
+            for var, coeff in KKn:
+                new_coeff = coeff / (1.0 - frac_basic)
+                expr_coeffs.append(new_coeff)
+                expr_vars.append(var)
+
+                expr_lhs += new_coeff * var.getAttr('X')
+                expr_rhs += new_coeff
+
+                # self.logger.debug('      GC: {:+1.16e} {:+1.16e} {}'.format(coeff, new_coeff, var))
+
+            self.logger.debug('  GC: lhs {:+1.16e} rhs {:+1.16e} delta {:+1.16e}'.format(expr_lhs, expr_rhs, expr_rhs - expr_lhs))
+
+            if abs(expr_lhs - expr_rhs) > 1e-8:
+                self.logger.debug('  GC: lhs != rhs')
+                continue
+
+            expr_rhs += 1
+
+            if self.is_duplicate_constraint(model=model, vars=expr_vars, coeffs=expr_coeffs, sense='>', rhs=expr_rhs):
+                self.logger.debug('  GC: duplicate constraint')
+                continue
+
+            # expr_rhs -= 1e-6
+
+            expr = grb.LinExpr(expr_coeffs, expr_vars) >= expr_rhs
+            # print('GC: constraint: {}'.format(expr))
+
+            model.addConstr(expr, name='gomory')
+
+            self.logger.debug('  GC: added constraint')
+
+            constraints_were_added = True
+
+        return constraints_were_added
+
+    def add_gomory_constraints_B(self, model):
+        if self.solution_is_integral(model):
+            return False
+
+        self.logger.debug('GC: starting')
+
+        mm = self._model_to_matrices(model)
+
+        self.logger.debug('GC: matrices')
+
+        Binv_NBVxNBV     = np.linalg.solve(mm.B_NBVxNBV, np.eye(mm.NBV))
+        tableau_NBVxNNMV = -np.dot(Binv_NBVxNBV, mm.N_NBVxNNMV)
+
+        self.logger.debug('GC: tableau')
+
+        constraints_were_added = False
+
+        for constr in model.getConstrs():
+            if constraints_were_added:
+                break
+
+            ##
+            ## Skip constraints whose slack variable is in the basis,
+            ## since it could be anything
+            ##
+
+            if constr.getAttr('CBasis') == 0:
+                # print('  GC: constr has basic slack variable')
+                continue
+
+            row_idx = mm.row_idx_by_constr[constr]
+            if row_idx >= mm.NBMV:
+                self.logger.debug('  GC: row_idx {} >= NBMV {}'.format(row_idx, mm.NBMV))
+                continue
+            # print('  GC: constr name = {}'.format(mm.A_constr_by_row_idx[row_idx].getAttr('ConstrName')))
+
+            ##
+            ## Skip previously-generated Gomory cuts.
+            ##
+
+            if constr.getAttr('ConstrName') == 'gomory':
+                self.logger.debug('  GC: skipping gomory constraint')
+                continue
+
+            ##
+            ## Check if the basic variable is non-integral.
+            ## If not, move on.
+            ##
+
+            def round(xx):
+                return math.floor(xx + 0.5)
+
+            basic_val = mm.xB_NBVx1[row_idx,0]
+            basic_var = mm.B_basic_model_var_by_col_idx[row_idx]
+            self.logger.debug('  GC: basic_var = {}'.format(basic_var))
+            self.logger.debug('  GC: basic_val = {:+1.16e}'.format(basic_val))
+            if abs(basic_val - round(basic_val)) < 1e-2:
+                self.logger.debug('  GC: integral-ish basic_val')
+                continue
+
+            Binv_b = np.asscalar(np.dot(Binv_NBVxNBV[[row_idx],:], mm.b_NBVx1))
+            self.logger.debug('  GC: Binv_b = {:+1.16e}'.format(Binv_b))
+
+            frac_basic  = basic_val - math.floor(basic_val)
+            frac_Binv_b = Binv_b    - math.floor(Binv_b)
+
+            self.logger.debug('  GC: frac_basic  = {:+1.16e}'.format(frac_basic))
+            self.logger.debug('  GC: frac_Binv_b = {:+1.16e}'.format(frac_Binv_b))
+
+
+            allowable_values = [ ]
+            for numer in xrange(-10, +11):
+                for denom in xrange(-10, +11):
+                    if denom != 0:
+                        allowable_values.append(float(numer)/denom)
+
+            for value in allowable_values:
+                if abs(frac_basic - value) < 1e-10:
+                    frac_basic = value
+                    break
+
+            if frac_basic not in allowable_values:
+                continue
+
+            if frac_basic == 0:
+                continue
+
+            ##
+            ## Sanity check.
+            ##
+
+            sanity_lhs = basic_val
+            sanity_rhs = Binv_b
+            self.logger.debug('  GC: initial sanity_rhs {:+1.5e}'.format(sanity_rhs))
+
+            for col_idx in xrange(mm.NNMV):
+                nonbasic_var   = mm.N_nonbasic_model_var_by_col_idx[col_idx]
+                if nonbasic_var.getAttr('VBasis') == 0:
+                    raise StandardError('variable should not be basic')
+                nonbasic_val   = nonbasic_var.getAttr('X')
+                nonbasic_coeff = tableau_NBVxNNMV[row_idx,col_idx]
+
+                # if abs(nonbasic_coeff) < 1e-6:
+                #     continue
+
+                # self.logger.debug('    GC: coeff/value {:+1.6e} {:+1.6e}'.format(nonbasic_coeff, nonbasic_val))
+
+                if (nonbasic_val != nonbasic_var.getAttr('LB')) and (nonbasic_val != nonbasic_var.getAttr('UB')):
+                    raise StandardError('nonbasic variable should be at one of its bounds: {}'.format(nonbasic_var))
+
+                sanity_rhs += nonbasic_coeff * nonbasic_val
+
+            self.logger.debug('  GC: sanity: lhs {:+1.16e} rhs {:+1.16e}'.format(sanity_lhs, sanity_rhs))
+            if abs(sanity_rhs - sanity_lhs) > 1e-8:
+                self.logger.debug('  GC: sanity failure')
+                # import pdb; pdb.set_trace()
+                raise StandardError('sanity check failed')
+
+            ##
+            ## Create four sets of nonbasic model variables:
             ##   - JJ0: at lower bound, tableau coeff < 1 - frac_basic
             ##   - JJ1: at lower bound, tableau coeff > 1 - frac_basic
             ##   - KK0: at upper bound, tableau coeff < frac_basic
             ##   - KK1: at upper bound, tableau coeff > frac_basic
             ##
+
+            skip_this_constraint = False
 
             JJ0 = []
             JJ1 = []
@@ -991,8 +1307,17 @@ class TspBranchAndCut(object):
                 nonbasic_val   = nonbasic_var.getAttr('X')
                 nonbasic_coeff = tableau_NBVxNNMV[row_idx,col_idx]
 
-                # if abs(nonbasic_coeff) < 1e-6:
-                #     continue
+                for value in allowable_values:
+                    if abs(nonbasic_coeff - value) < 1e-10:
+                        nonbasic_coeff = value
+                        break
+
+                if not nonbasic_coeff in allowable_values:
+                    skip_this_constraint = True
+                    break
+
+                if nonbasic_coeff == 0:
+                    continue
 
                 lb = nonbasic_var.getAttr('LB')
                 ub = nonbasic_var.getAttr('UB')
@@ -1016,8 +1341,12 @@ class TspBranchAndCut(object):
                 else:
                     raise StandardError('nonbasic variable {:+1.6e} not at either bound'.format(nonbasic_var))
 
+            if skip_this_constraint:
+                self.logger.debug('  GC: skipping constraint because of unexpected coeffs')
+                continue
+
             if (len(JJ0) == 0) and (len(JJ1) == 0) and (len(KK0) == 0) and (len(KK1) == 0):
-                self.logger.debug('  GC: no nontrivial coeffs in JJ0,JJ0,KK0,KK1')
+                self.logger.debug('  GC: no nontrivial coeffs in JJ0,JJ1,KK0,KK1')
                 continue
 
             ##
@@ -1028,33 +1357,35 @@ class TspBranchAndCut(object):
             expr_coeffs = []
             expr_vars   = []
             expr_lhs    = 0.0
-            expr_rhs    = 1.0
+            expr_rhs    = 0.0
 
-            # self.logger.debug('    GC: JJ0:')
+            self.logger.debug('    GC: JJ0:')
             for var, coeff in JJ0:
                 fi = coeff - math.floor(coeff)
                 new_coeff = fi / (1.0 - frac_basic)
+
                 expr_coeffs.append(new_coeff)
                 expr_vars.append(var)
 
                 expr_lhs += new_coeff * var.getAttr('X')
                 ## lower bound is zero so nothing to add to rhs
 
-                # self.logger.debug('      GC: {:+1.16e} {}'.format(new_coeff, var))
+                # self.logger.debug('      GC: {:+1.16e} {:+1.16e} {}'.format(coeff, new_coeff, var))
 
-            # self.logger.debug('    GC: JJ1:')
+            self.logger.debug('    GC: JJ1:')
             for var, coeff in JJ1:
                 fi = coeff - math.floor(coeff)
                 new_coeff = (1.0 - fi) / frac_basic
+
                 expr_coeffs.append(new_coeff)
                 expr_vars.append(var)
 
                 expr_lhs += new_coeff * var.getAttr('X')
                 ## lower bound is zero so nothing to add to rhs
 
-                # self.logger.debug('      GC: {:+1.16e} {}'.format(new_coeff, var))
+                # self.logger.debug('      GC: {:+1.16e} {:+1.16e} {}'.format(coeff, new_coeff, var))
 
-            # self.logger.debug('    GC: KK0:')
+            self.logger.debug('    GC: KK0:')
             for var, coeff in KK0:
                 fi = coeff - math.floor(coeff)
                 new_coeff = -fi / frac_basic
@@ -1064,9 +1395,9 @@ class TspBranchAndCut(object):
                 expr_lhs += new_coeff * var.getAttr('X')
                 expr_rhs += new_coeff
 
-                # self.logger.debug('      GC: {:+1.16e} {}'.format(new_coeff, var))
+                # self.logger.debug('      GC: {:+1.16e} {:+1.16e} {}'.format(coeff, new_coeff, var))
 
-            # self.logger.debug('    GC: KK1:')
+            self.logger.debug('    GC: KK1:')
             for var, coeff in KK1:
                 fi = coeff - math.floor(coeff)
                 new_coeff = -(1.0 - fi) / (1.0 - frac_basic)
@@ -1076,7 +1407,7 @@ class TspBranchAndCut(object):
                 expr_lhs += new_coeff * var.getAttr('X')
                 expr_rhs += new_coeff
 
-                # self.logger.debug('      GC: {:+1.16e} {}'.format(new_coeff, var))
+                # self.logger.debug('      GC: {:+1.16e} {:+1.16e} {}'.format(coeff, new_coeff, var))
 
             nonzero_coeff_found = False
             for coeff in expr_coeffs:
@@ -1087,112 +1418,12 @@ class TspBranchAndCut(object):
                 self.logger.debug('  GC: no nonzero coefficients in final lhs')
                 continue
 
-            ##
-            ## Create four sets of nonbasic model variables:
-            ##   - JJp: at lower bound, tableau coeff > 0
-            ##   - JJn: at lower bound, tableau coeff < 0
-            ##   - KKp: at upper bound, tableau coeff > 0
-            ##   - KKn: at upper bound, tableau coeff < 0
-            ##
-
-            # JJp = []
-            # JJn = []
-            # KKp = []
-            # KKn = []
-            # for col_idx in xrange(mm.NNMV):
-            #     nonbasic_var   = mm.N_nonbasic_model_var_by_col_idx[col_idx]
-            #     nonbasic_val   = nonbasic_var.getAttr('X')
-            #     nonbasic_coeff = tableau_NBVxNNMV[row_idx,col_idx]
-
-            #     if abs(nonbasic_coeff) < 1e-10:
-            #         continue
-
-            #     lb = nonbasic_var.getAttr('LB')
-            #     ub = nonbasic_var.getAttr('UB')
-            #     if lb != 0.0:
-            #         raise StandardError('incorrect lower bound: {:+1.6e}'.format(lb))
-            #     if ub != 1.0:
-            #         raise StandardError('incorrect upper bound: {:+1.6e}'.format(ub))
-
-            #     if nonbasic_val == lb:
-            #         if nonbasic_coeff > 0.0:
-            #             JJp.append( (nonbasic_var,nonbasic_coeff) )
-            #         elif nonbasic_coeff < 0.0:
-            #             JJn.append( (nonbasic_var,nonbasic_coeff) )
-            #     elif nonbasic_val == ub:
-            #         if nonbasic_coeff > 0.0:
-            #             KKp.append( (nonbasic_var,nonbasic_coeff) )
-            #         elif nonbasic_coeff < 0.0:
-            #             KKn.append( (nonbasic_var,nonbasic_coeff) )
-            #     else:
-            #         raise StandardError('nonbasic variable {:+1.6e} not at either bound'.format(nonbasic_var))
-
-            # if (len(JJp) == 0) and (len(JJn) == 0) and (len(KKp) == 0) and (len(KKn) == 0):
-            #     self.logger.debug('  GC: non nontrivial coeffs in JJn,JJp,KKn,KKp')
-            #     continue
-
-            # ##
-            # ## Create a mixed-integer Gomory cut, and ensure
-            # ## that it is really violated by the current solution.
-            # ##
-
-            # Binv_b_quant = frac_Binv_b*(2.0*frac_basic - 1.0)/(frac_basic*(1.0 - frac_basic))
-            # self.logger.debug('  GC: Binv_b_quant = {:+1.16e}'.format(Binv_b_quant))
-
-            # expr_coeffs = []
-            # expr_vars   = []
-            # expr_lhs    = 0.0 #Binv_b_quant
-            # expr_rhs    = 1.0 - 1e-6
-
-            # self.logger.debug('    GC: JJp:')
-            # for var, coeff in JJp:
-            #     new_coeff = coeff / (1.0 - frac_basic)
-            #     expr_coeffs.append(new_coeff)
-            #     expr_vars.append(var)
-
-            #     expr_lhs += new_coeff * var.getAttr('X')
-            #     ## lower bound is zero so nothing to add to rhs
-
-            #     self.logger.debug('      GC: {:+1.16e} {}'.format(new_coeff, var))
-
-            # self.logger.debug('    GC: JJn:')
-            # for var, coeff in JJn:
-            #     new_coeff = -coeff / frac_basic
-            #     expr_coeffs.append(new_coeff)
-            #     expr_vars.append(var)
-
-            #     expr_lhs += new_coeff * var.getAttr('X')
-            #     ## lower bound is zero so nothing to add to rhs
-
-            #     self.logger.debug('      GC: {:+1.16e} {}'.format(new_coeff, var))
-
-            # self.logger.debug('    GC: KKp:')
-            # for var, coeff in KKp:
-            #     new_coeff = -coeff / frac_basic
-            #     expr_coeffs.append(new_coeff)
-            #     expr_vars.append(var)
-
-            #     expr_lhs += new_coeff * var.getAttr('X')
-            #     expr_rhs += new_coeff
-
-            #     self.logger.debug('      GC: {:+1.16e} {}'.format(new_coeff, var))
-
-            # self.logger.debug('    GC: KKn:')
-            # for var, coeff in KKn:
-            #     new_coeff = coeff / (1.0 - frac_basic)
-            #     expr_coeffs.append(new_coeff)
-            #     expr_vars.append(var)
-
-            #     expr_lhs += new_coeff * var.getAttr('X')
-            #     expr_rhs += new_coeff
-
-            #     self.logger.debug('      GC: {:+1.16e} {}'.format(new_coeff, var))
-
             self.logger.debug('  GC: lhs {:+1.16e} rhs {:+1.16e}'.format(expr_lhs, expr_rhs))
-            if expr_lhs >= expr_rhs:
-                self.logger.debug('  GC: lhs >= rhs')
+            if abs(expr_lhs - expr_rhs) > 1e-8:
+                self.logger.debug('  GC: lhs != rhs')
                 continue
-                # raise StandardError('  GC: cut is not violated: {:+1.16e} is not >= {:+1.16e}'.format(expr_lhs, expr_rhs))
+
+            expr_rhs += 1.0
 
             if self.is_duplicate_constraint(model=model, vars=expr_vars, coeffs=expr_coeffs, sense='>', rhs=expr_rhs):
                 self.logger.debug('  GC: duplicate constraint')
@@ -1208,33 +1439,6 @@ class TspBranchAndCut(object):
             constraints_were_added = True
 
         return constraints_were_added
-
-    # def add_gomory_constraints(self, model):
-    #     if self.solution_is_integral(model):
-    #         return False
-
-    #     mm = self._model_to_matrices(model)
-
-    #     A_NBVxNV = np.concatenate((mm.B_NBVxNBV, mm.N_NBVxNNMV), axis=1)
-
-    #     for var in model.getVars():
-    #         if var.getAttr('VBasis'):
-    #             A_col_idx = mm.B_col_idx_by_basic_model_var[var]
-    #         else:
-    #             A_col_idx = mm.NBV + mm.N_col_idx_by_nonbasic_model_var[var]
-
-    #         nonzero_coeff_row_idxs = np.where(A_NBVxNV[:,A_col_idx] != 0)
-    #         if len(nonzero_coeff_row_idxs) < 2:
-    #             continue
-
-
-
-    #         mvar_val = mvar.getAttr('X')
-    #         if abs(mvar_val - int(mvar_val)) < 1e-8:
-    #             continue
-
-    #         col = model.getCol(mvar)
-
 
 
     def coeffs_to_expr(self, coeff_by_var, model):
