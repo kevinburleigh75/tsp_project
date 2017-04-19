@@ -163,6 +163,12 @@ class TspBranchAndCut(object):
 \subsection{Model Processing}
 \begin{flushleft}
 
+Models are processed
+using a variation
+of the branch-and-bound
+technique
+called branch-and-cut.
+
 Once a model has been pulled
 from the model pool,
 it is optimized using gurobi.
@@ -228,8 +234,91 @@ class TspBranchAndCut(object):
 
         return new_model_info
 \end{lstlisting}
+
 \end{flushleft}
 
+\subsection{Adding Cuts (Constraints)}
+\begin{flushleft}
+
+Several algorithms were developed
+for finding violated constraints
+and adding them to models.
+These algorithms are called sequentially,
+and once a new constraint is added,
+the model updated and re-optimized.
+
+Details of the constraint-generating algorithms
+can be found in section \ref{sec:constralgs}.
+
+\begin{lstlisting}
+## tsp_solver.py
+class TspBranchAndCut(object):
+    def add_cuts_to_model(self, model):
+        constraints_were_added = False
+
+        if self.add_comb_constraints(model):
+            constraints_were_added = True
+        elif self.add_integral_subtour_constraints(model):
+            constraints_were_added = True
+        elif self.add_nonintegral_subtour_constraints(model):
+            constraints_were_added = True
+        elif self.add_objective_constraints(model):
+            constraints_were_added = True
+        # elif self.add_gomory_constraints(model):
+        #     constraints_were_added = True
+
+        return constraints_were_added
+\end{lstlisting}
+
+\end{flushleft}
+
+
+\subsection{Variable Fixing (Branching)}
+\begin{flushleft}
+
+Variable fixing (branching) is implemented
+by finding the first non-integral solution variable $x_e$
+and creating two new models:
+one forcing $x_e$ to take on exactly 0,
+and one forcing $x_e$ to take on exactly 1.
+The newly-created models
+are then returned to the caller,
+where they will be added to the model pool
+for further processing.
+
+\begin{lstlisting}
+## tsp_solver.py
+class TspBranchAndCut(object):
+    def create_branch_models(self, model):
+        best_idx = best_var = best_val = None
+
+        for idx,mvar in enumerate(model.getVars()):
+            val = mvar.getAttr('X')
+            if abs(val - int(val)) != 0.0:
+                if (best_val is None) or (abs(val - 0.5) < best_val):
+                    best_val = abs(val - 0.5)
+                    best_var = mvar
+                    best_idx = idx
+
+        model1 = grb.Model.copy(model)
+        m1var  = model1.getVarByName(best_var.getAttr('VarName'))
+        model1.addConstr(m1var == 0.0)
+        model1.update()
+
+        model2 = grb.Model.copy(model)
+        m2var  = model2.getVarByName(best_var.getAttr('VarName'))
+        model2.addConstr(m2var == 1.0)
+        model2.update()
+
+        return (model1, model2)
+\end{lstlisting}
+
+\end{flushleft}
+
+\section{Constraint Algoritms} \label{sec:constralgs}
+\begin{flushleft}
+
+\end{flushleft}
 
 Once we developed our algorithm for solving TSPBC,
 we looked to Python and the gurobipy module.
@@ -248,50 +337,6 @@ Additionally, there are auxiliary functions
 that easily convert
 a Graph instance into a Gurobi model.
 
-\section{Initialize model}
-Given an input fie,
-the data is translated
-as a series of nodes,
-edge and their assigned weights,
-with each node having an edge
-to every other node.
-This data is transformed
-into a Gurobi model,
-initialized with degree constraints
-and bounds on the edge decision variables.
-This creates our initial linear program (LP)
-for the TSPBC.
-Our initial LP is then added to our priority queue.
-
-\section{Process}
-While the priority queue is not empty,
-we pop a model
-and set as our current model.
-We then update the model
-and solve for the optimal solution.
-Before we start to branch,
-we first check to see
-whether the solution is feasible.
-If infeasible,
-we stop the branch
-and move on to the next item in the priority queue.
-Next, we check if the model
-can be cut down
-by adding constraints
-that lower the objective function.
-We then check
-if our solution forms a tour,
-else we stop the branch.
-If possible,
-we add new constraints
-that help our model
-reduce its objective value.
-Once global and local constraints
-are added to the models,
-we create two new branches
-and continue once again
-for the next model
-in the priority queue.
 
 \section{Constraints}
 These specific cuts
