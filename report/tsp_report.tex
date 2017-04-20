@@ -341,13 +341,11 @@ class TspBranchAndCut(object):
 \section{Graph Class}
 
 \subsection{Tour Detection}
-
-Tours are detected by:
-\begin{enumerate}
-  \item verifying that $x_e \in \{0,1\} \forall e \in E$
-  \item ensuring that every node has a degree of two
-  \item ensuring that there is only one connected component (no subtours)
-\end{enumerate}
+\begin{flushleft}
+Tours are detected by
+(a) verifying that $x_e \in \{0,1\} \forall e \in E$,
+(b) ensuring that every node has a degree of two, and
+(c) ensuring that there is only one connected component (no subtours).
 
 \begin{lstlisting}
 ## graph.py
@@ -400,7 +398,10 @@ class Graph(object)
         return True
 \end{lstlisting}
 
+\end{flushleft}
+
 \subsection{Connected Components}
+\begin{flushleft}
 
 Connected components can be detected
 by doing a breadth-first search
@@ -452,9 +453,12 @@ class Graph(object)
         return connected_components_nodes, connected_components_edges
 \end{lstlisting}
 
-\subsection{Min-Cut}
+\end{flushleft}
 
-The Stoer-Wagner algorithm is used
+\subsection{Min-Cut}
+\begin{flushleft}
+
+The Stoer-Wagner\cite{stoerwagner} algorithm is used
 to find min-cuts in a graph.
 The algorithm works by repeatedly removing
 the "least attached" node (based on its cut)
@@ -512,6 +516,7 @@ class Graph(object)
         return all_cuts
 \end{lstlisting}
 
+\end{flushleft}
 
 \section{Constraint (Cut) Algorithms} \label{sec:constralgs}
 \begin{flushleft}
@@ -680,8 +685,14 @@ that:
 \end{equation}
 if $k$ is odd.
 
-Equation \eqref{eq:combineq} is call the \textit{comb inequality}
+Equation \eqref{eq:combineq} is called the \textit{comb inequality}
 and can be used to find subtour constraint violations.
+
+The code is too incolved to show here,
+but details can be found in \cite{tspproblem},\cite{ico}.
+The following figures show combs found
+during the processing of datasets
+for this project.
 
 \includegraphics[width=1.5in, height=1.5in]{blossom_simple}
 \includegraphics[width=1.5in, height=1.5in]{blossom_medium}
@@ -752,14 +763,28 @@ class TspBranchAndCut(object):
         return True
 \end{lstlisting}
 
+\subsection{Gomory}
 \begin{flushleft}
 
+Gomory mixed-integer constraints
+can be generated from the final tableau
+that results from the simplex algorithm.
+
+We chose to implement these constraints
+based on \cite{gomory},
+partly because the derivation was rather clear
+and partly because it deals with the case
+of general lower- and upper-bounds on variables.
+
+The code worked fine on all datasets except pr76,
+where it resulted in a sub-optimal tour
+This was possibly due to accumulation of rounding errors,
+but steps were taken to mitigate that problem proved ineffective.
+
+The code is included in our project,
+but was disabled for the final runs.
+
 \end{flushleft}
-
-% \subsection{Gomory}
-% \begin{flushleft}
-
-% \end{flushleft}
 
 \end{flushleft}
 
@@ -1232,168 +1257,26 @@ The cost of the best tour is: 7013.0
 \end{flushleft}
 
 
+\begin{thebibliography}{9}
+\bibitem{stoerwagner}
+Mechthild Stoer and Frank Wagner.
+\textit{A Simple Min-Cut Algorithm}.
+Journal of the ACM, Vol. 44, No. 4, July 1997, pp.585-591.
 
+\bibitem{tspproblem}
+David L. Applegate, Robert E. Bixby, Vasek Chvatal, and William J. Cook.
+\textit{The Traveling Salesman Problem}.
+Princeton University Press, 2006, pp.185-191.
 
-Once we developed our algorithm for solving TSPBC,
-we looked to Python and the gurobipy module.
-Additionally, we implemented a Graph object
-to facilitate our computation of TSPBC.
-Graph is initialized
-by helper functions
-that assign its node, edge and edge weight attributes.
-Graph also contains
-methods to find the minimum cut,
-to compute connected components,
-and to determine if the instance forms a tour.
-Instances of graph are copied
-before more branches are produced.
-Additionally, there are auxiliary functions
-that easily convert
-a Graph instance into a Gurobi model.
+\bibitem{ico}
+George L. Nemhauser and Laurence A Wolsey.
+\textit{Integer and Combinatorial Optimization}.
+John Wiley and Sons, Inc, 1999, pp.270-281.
 
-
-\section{Constraints}
-These specific cuts
-are comb and blossom inequalities,
-integral and non-integral sub-tour constraints,
-and mixed-integer Gomory cuts.
-For the comb and blossom inequalities,
-we searched for cuts based of this equation
-in our candidate solution:
-[INSERT BLOSSOM INEQUALITY]
-For both integral and non-integral sub-tour constraints,
-we check to see
-if the current model formed a sub-tour,
-and if so we added a constraint.
-Lastly, for mixed integer Gomory cuts,
-we searched for cuts based of
-[INSERT MIXED INTEGER GOMORY CUTS].
-For each cut,
-constraints are added
-to each Gurobi model
-and the model is then solved
-and branched out again.
-
-\section{Min Cut}
-To compute the min cut,
-we use the Stoer-Wagner min-cut algorithm
-in the provided paper.
-Our implementation of this algorithm
-returned the nodes that made up the min cut
-as well as the size of the min cut.
-The value of the minimum cut
-was less than two
-if and only if
-there is a constraint that has been violated.
-This function is contained as a method in Graph.
-
-\section{Computing Tour}
-Given a candidate branch,
-we must check if it forms a potential solution.
-In our python implementation,
-our solution is a vector of values in [0.0, 1.0].
-These values represent
-if an edge is included in our solution.
-We can eliminate infeasible branches
-if their vector contains a value
-that isn’t either 0.0 or 1.0.
-Additionally, we need to check
-if our potential solution satisfies
-the degree constraint [degree].
-Finally, we must check
-that our candidate solution produces
-at most one connected component.
-We can compute the connected components
-of our candidate solution
-by running breadth-first search
-on every edge in our candidate solution.
-If our candidate solution passes
-that each edge is either 0.0 or 1.0,
-then we have each node in our tour
-meeting the degree constraint [degree],
-and that our candidate solution
-forms at most one connected components [degree],
-then this is sufficient to declare
-our candidate solution a tour.
-This function is contained as a method in Graph.
-
-\section{Implementation}
-
-\subsection{The Graph Class}
-
-A \textit{Graph} class was created
-to encapsulate purely graph-related functionality,
-such as identifying:
-\begin{enumerate}
-\item nodes in connected components
-\item edges in a min-cut
-\item edges in the cut for a set of nodes
-\item whether or not a set of edges forms a tour
-\end{enumerate}
-
-\section{Results}
-    att48
-
-    berlin52
-
-    gr21
-
-    hk48
-
-    ulysses22
-
-    pr76
-
-    st70
-
-\section{Improvements}
-
-\section{Closing Remarks}
-Our implementation of TSPBC was successful
-in that we could correctly solve
-each of the data sets provided.
-However, as stated in our improvements section,
-we could have added more types of cuts
-to reduce the runtime of pr76.
-
-
-\section{Section Title Here}
-
-\subsection{Subsection Title Here}
-
-\begin{flushleft}
-
-Some text here.
-
-\begin{equation} \label{probdef}
-  p(a \le Z \le b) = \int_{a}^{\,b} \phi(x) \,dx
-\end{equation}
-
-Reference equation \autoref{probdef} here.
-
-\begin{align*}
-  p(a \le Z \le b)  &=  p(Z \le b) - p(Z \le a) \\
-                    &=  \int_{-\infty}^{\,b} \phi(x) \,dx
-                        -
-                        \int_{-\infty}^{\,a} \phi(x) \,dx \\
-                    &=  \Phi(b) - \Phi(a)
-\end{align*}
-
-Inline $\Phi(\alpha)$ here.
-
-\begin{equation*}
-  \Phi(\alpha)  = \int_{-\infty}^{\,\alpha} \phi(x) \,dx
-\end{equation*}
-
-% \begin{figure}[h!]
-% \begin{center}
-% \input{fig_pdfcdfarea}
-% \caption{
-% Image caption here.}
-% \label{pdfcdfarea}
-% \end{center}
-% \end{figure}
-
-\end{flushleft}
+\bibitem{gomory}
+Bruno Dutertre and Leonardo de Moura.
+\textit{Integrating Simplex with DPLL(T)}.
+SRI International, CSL Technical Report SRI-CSL-06-01, May 23, 2006.
+\end{thebibliography}
 
 \end{document}
