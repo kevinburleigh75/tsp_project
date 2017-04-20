@@ -39,7 +39,8 @@ We were tasked
 to solve the Traveling Salesman Problem
 using the branch-and-cut method,
 utilizing Gurobi
-to solve only linear programming relaxations of integer programs.
+to solve only linear programming relaxations
+of integer programs.
 
 Given a graph $G = (N,E)$ with nodes $N$ and edges $E$,
 and an associated cost $c_e$ for each edge,
@@ -71,11 +72,9 @@ and then exited exactly once.
 This leaves open the possibilty of subtours,
 which are eliminated by the second set of constraints.
 
-\includegraphics[width=4in, height=4in]{pr76_optTour}
-
 \end{flushleft}
 
-\section{Algorithm}
+\section{Branch-and-Cut Control Code}
 
 The algorithmic approach to solving TSPBC is as follows:
 1. Initialize a Gurobi model with input data and add to a priority queue.
@@ -315,10 +314,678 @@ class TspBranchAndCut(object):
 
 \end{flushleft}
 
-\section{Constraint Algoritms} \label{sec:constralgs}
+\section{Constraint (Cut) Algorithms} \label{sec:constralgs}
+\begin{flushleft}
+
+\subsection{Subtour}
+\begin{flushleft}
+
+The subtour constraints
+in the original TSP IP formulation \eqref{eq:tspip}
+cannot be enumerated in practice
+for large TSP problems,
+which is why they are dropped
+in the initial LP relaxation \eqref{eq:tsplpinit}.
+
+Given a solution $\vec{x}^*$
+to an LP relaxation,
+it is possible to find and re-apply
+a violated subtour constraint
+by examining min-cuts
+on the resulting graph:
+if the min-cut is less than two,
+then some subtour contraint
+has been violated.
+By dividing the nodes
+into two subsets ($S$ and $N \setminus S$)
+as determined by
+the edges in the min-cut,
+the following constraint
+can be constructed:
+
+\begin{equation}
+\sum_{e \in S}{x_e} \geq 2
+\end{equation}
+
+Two algorithms were developed
+to find cuts based on this property:
+One works for binary $\vec{x}^*$
+and the other works for any $\vec{x}^*$.
+Both utilize the same underlying
+graph ultilities.
+
+Subtour contraints are universal:
+they apply to any TSP model
+regardless of what other decisions
+(e.g., variable fixing)
+might have been made.
+As a result,
+when a subtour constraint is found,
+it is added to \textit{all} models
+(not just the current model).
+This avoids searching
+for the identical constraint
+multiple times.
+
+\subsubsection{Integral}
+\begin{flushleft}
+
+If $\vec{x}^*$ is binary
+($x_e \in \{0,1\} \forall e \in E$)
+then finding a min-cut
+is the same as finding a cut
+for some connected component
+(assuming there is more than one).
+This cut will obviously have value zero
+(since $\vec{x}^*$ is binary),
+which is below the subtour
+constraint threshold of two.
+
+\begin{lstlisting}
+## tsp_solver.py
+class TspBranchAndCut(object):
+    def add_integral_subtour_constraints(self, model):
+        graph, xx = self.convert_model(model)
+        connected_component_nodes, connected_component_edges =
+            graph.binary_connected_components(solution=xx)
+
+        if len(connected_component_nodes) == 1:
+            return False
+
+        for cur_model in all_models:
+            mvars = cur_model.getVars()
+
+            for cc in connected_component_nodes:
+                ## translate the edge indices into model variables
+                cut_edges = graph.get_cut_edges(nodes=cc)
+                var_idxs = sorted([self.idx_by_edge[edge] for edge in cut_edges])
+                cvars  = [mvars[idx] for idx in var_idxs]
+                coeffs = [1.0 for idx in var_idxs]
+
+                cur_model.addConstr(grb.quicksum(cvars) >= 2.0, 'subtour-integral')
+
+                constraints_were_added = True
+
+        return constraints_were_added
+\end{lstlisting}
+
+\end{flushleft}
+
+\subsubsection{Non-Integral}
+
+\begin{flushleft}
+
+Instead of using connected components
+like the integral approach,
+this algorithm looks
+for any min-cut
+whose value is less than two.
+In fact,
+it accumulates \textit{all}
+of the violated subtour constraints
+it encounters for the given solution.
+
+\begin{lstlisting}
+## tsp_solver.py
+class TspBranchAndCut(object):
+    def add_nonintegral_subtour_constraints(self, model):
+        graph, xx = self.convert_model(model)
+
+        modified_graph, xx = self.convert_model(model)
+        all_cuts = []
+        while still_adding_new_cuts:
+            cur_cuts = modified_graph.find_min_cut()
+            all_cuts.extend(cur_cuts)
+
+            if cur_cuts[0][0] > 0.0:
+                break
+
+            new_nodes   = set(modified_graph.nodes) - set(cur_cuts[0][1])
+            new_edges   = set()
+            new_weights = {}
+            for node in new_nodes:
+                for edge in modified_graph.edges_by_node[node]:
+                    if (edge[0] in new_nodes) and (edge[1] in new_nodes):
+                        new_edges.add(edge)
+                        new_weights[edge] = modified_graph.weight_by_edge[edge]
+
+            modified_graph = Graph(nodes=new_nodes, edges=new_edges, weight_by_edge=new_weights)
+
+        all_cuts = sorted(all_cuts, key=lambda x: x[0])
+        if len(all_cuts) == 0:
+            return False
+        if all_cuts[0][0] >= 2.0:
+            return False
+
+        for cur_model in all_models:
+            for var_idxs in non_dup_cuts:
+                add_constr_to_model(model=cur_model, var_idxs=var_idxs)
+
+        return constraints_were_added
+\end{lstlisting}
+
+\end{flushleft}
+
+\end{flushleft}
+
+\subsection{Comb (Blossom) Inequalities}
+\begin{flushleft}
+
+Given an optimal tour on $G = (N,E)$,
+it can be shown that,
+for some 'handle' node set $H \subset N$
+and 'tooth' edges $\{ T_1,\ldots,T_k \} = \delta(H)$,
+that:
+\begin{equation} \label{eq:combineq}
+  \sum_{e \in \delta(H)}{x_e} + \sum_{i = 1}^{k}{ \sum_{e \in \delta(T_i)}{x_e} } \geq 3k + 1
+\end{equation}
+if $k$ is odd.
+
+Equation \eqref{eq:combineq} is call the \textit{comb inequality}
+and can be used to find subtour constraint violations.
+
+\includegraphics[width=1.5in, height=1.5in]{blossom_simple}
+\includegraphics[width=1.5in, height=1.5in]{blossom_medium}
+\includegraphics[width=1.5in, height=1.5in]{blossom_large}
+
+\end{flushleft}
+
+\subsection{Objective}
+
+In our particular flavor of the TSP,
+all edge costs $c_e$ are integral.
+This implies that the objective value
+of a valid TSP tour
+must also be integral
+because all $x_e$ decision variables
+must be integral.
+
+This makes it possible
+to create a new constraint
+whenever the LP relaxation objective value
+is non-integral by just rounding it up:
+\begin{equation}
+\sum_{e \in E}{c_e x_e} >= \left \lceil \sum_{e \in E}{c_e x_e^*} \right \rceil
+\end{equation}
+where $x_e^*$ are the current LP relaxation decision variables.
+
+It turns out that gurobi
+allows constraints to be modified,
+so only one objective constraint
+is ever present at any given time.
+Also, because this constraint relies
+on locally-made decisions
+(like variable fixing),
+it is applied to the current model only.
+Some precautions were taken
+to avoid applying this constraint inappropriately
+due to floating-point rounding issues.
+
+\begin{lstlisting}
+## tsp_solver.py
+class TspBranchAndCut(object):
+    def add_objective_constraints(self, model):
+        obj_val = model.getAttr('ObjVal')
+        ceil_obj_val  = math.ceil(obj_val)
+        floor_obj_val = math.floor(obj_val)
+
+        if (abs(obj_val - floor_obj_val) < 1e-6) or (abs(obj_val - ceil_obj_val) < 1e-6):
+            return False
+
+        target_constr_name = 'objective-roundup'
+
+        target_constr = None
+        for constr in model.getConstrs():
+            if constr.getAttr('ConstrName') == target_constr_name:
+                target_constr = constr
+                break
+
+        if target_constr is not None:
+            target_constr.setAttr('RHS', ceil_obj_val)
+        else:
+            mvars = model.getVars()
+
+            var_idxs = sorted([self.idx_by_edge[edge] for edge in self.edges])
+            cvars = [mvars[idx].getAttr('Obj')*mvars[idx] for idx in var_idxs]
+
+            model.addConstr(grb.quicksum(cvars) >= ceil_obj_val, 'objective-roundup')
+
+        return True
+\end{lstlisting}
+
 \begin{flushleft}
 
 \end{flushleft}
+
+\subsection{Gomory}
+\begin{flushleft}
+
+\end{flushleft}
+
+\end{flushleft}
+
+\section{Results}
+\begin{flushleft}
+
+\subsection{att48}
+\begin{flushleft}
+
+\includegraphics[width=4in, height=4in]{att48_optTour}
+
+\begin{lstlisting}[language=C]
+0   7   178
+7   37  312
+37  30  183
+30  43  139
+43  17  112
+17  6   54
+6   27  85
+27  5   153
+5   36  66
+36  18  42
+18  26  64
+26  16  117
+16  42  139
+42  29  127
+29  35  233
+35  45  286
+45  32  134
+32  19  207
+19  46  246
+46  20  225
+20  31  393
+31  38  169
+38  47  317
+47  4   97
+4   41  370
+41  23  403
+23  9   292
+9   44  401
+44  34  146
+34  3   451
+3   25  102
+25  1   585
+1   28  381
+28  33  474
+33  40  356
+40  15  393
+15  21  140
+21  2   207
+2   22  262
+22  13  192
+13  24  133
+24  12  169
+12  10  242
+10  11  186
+11  14  129
+14  39  175
+39  8   214
+8   0   147
+The cost of the best tour is: 10628.0
+\end{lstlisting}
+
+\end{flushleft}
+
+\subsection{berlin52}
+\begin{flushleft}
+
+\includegraphics[width=4in, height=4in]{berlin52_optTour}
+
+\begin{lstlisting}[language=C]
+0   21  46
+21  30  104
+30  17  80
+17  2   135
+2   16  217
+16  20  253
+20  41  290
+41  6   76
+6   1   45
+1   29  390
+29  22  179
+22  19  94
+19  49  35
+49  28  191
+28  15  201
+15  45  156
+45  43  131
+43  33  80
+33  34  21
+34  35  15
+35  38  43
+38  39  43
+39  36  41
+36  37  43
+37  47  49
+47  23  16
+23  4   32
+4   14  25
+14  5   40
+5   3   70
+3   24  109
+24  11  245
+11  27  182
+27  26  110
+26  25  126
+25  46  186
+46  12  324
+12  13  206
+13  51  319
+51  10  399
+10  50  285
+50  32  475
+32  42  365
+42  9   308
+9   8   83
+8   7   183
+7   40  64
+40  18  92
+18  44  75
+44  31  151
+31  48  50
+48  0   64
+The cost of the best tour is: 7542.0
+\end{lstlisting}
+
+\end{flushleft}
+
+\subsection{gr21}
+\begin{flushleft}
+
+\includegraphics[width=4in, height=4in]{gr21_optTour}
+
+\begin{lstlisting}[language=C]
+0   6   110
+6   7   29
+7   5   36
+5   15  125
+15  4   125
+4   8   120
+8   2   295
+2   1   355
+1   20  140
+20  14  105
+14  13  170
+13  12  190
+12  17  180
+17  9   77
+9   16  150
+16  18  87
+18  19  155
+19  10  100
+10  3   63
+3   11  27
+11  0   68
+The cost of the best tour is: 2707.0
+\end{lstlisting}
+
+\end{flushleft}
+
+\subsection{hk48}
+\begin{flushleft}
+
+\includegraphics[width=4in, height=4in]{hk48_optTour}
+
+\begin{lstlisting}[language=C]
+0   1   273
+1   47  335
+47  14  236
+14  42  252
+42  20  189
+20  32  318
+32  29  669
+29  22  326
+22  8   197
+8   9   177
+9   39  130
+39  35  345
+35  33  83
+33  5   188
+5   7   182
+7   46  177
+46  6   138
+6   37  178
+37  13  115
+13  17  90
+17  11  238
+11  21  165
+21  12  100
+12  27  90
+27  31  154
+31  24  161
+24  2   155
+2   4   140
+4   28  217
+28  25  129
+25  40  291
+40  23  238
+23  34  166
+34  16  123
+16  30  235
+30  19  214
+19  10  563
+10  15  96
+15  41  371
+41  3   387
+3   45  443
+45  44  229
+44  38  145
+38  43  534
+43  26  347
+26  36  357
+36  18  346
+18  0   229
+The cost of the best tour is: 11461.0
+\end{lstlisting}
+
+\end{flushleft}
+
+\subsection{pr76}
+\begin{flushleft}
+
+\includegraphics[width=4in, height=4in]{pr76_optTour}
+
+\begin{lstlisting}[language=C]
+0   22  1931
+22  21  1433
+21  20  1193
+20  24  550
+24  23  1118
+23  45  1931
+45  44  1433
+44  43  1193
+43  47  550
+47  46  1118
+46  68  1931
+68  67  1433
+67  69  3946
+69  66  3905
+66  49  3100
+49  48  700
+48  50  1629
+50  65  1053
+65  64  716
+64  70  4070
+70  71  1900
+71  72  300
+72  63  3250
+63  62  667
+62  61  1512
+61  60  700
+60  40  2261
+40  59  550
+59  58  522
+58  57  1164
+57  56  1118
+56  55  1617
+55  54  700
+54  51  1364
+51  52  906
+52  53  583
+53  41  550
+41  42  716
+42  27  1053
+27  26  1369
+26  25  700
+25  19  3046
+19  18  716
+18  30  550
+30  29  583
+29  28  906
+28  31  1364
+31  32  700
+32  34  1841
+34  33  1118
+33  39  1280
+39  38  1512
+38  37  700
+37  35  1390
+35  36  522
+36  17  550
+17  16  667
+16  15  1512
+15  14  700
+14  73  4533
+73  13  3158
+13  12  522
+12  11  1164
+11  10  1118
+10  9   1617
+9   8   700
+8   7   2000
+7   6   583
+6   5   906
+5   4   1115
+4   3   1369
+3   2   700
+2   1   2926
+1   74  3640
+74  75  300
+75  0   3716
+The cost of the best tour is: 108159.0
+\end{lstlisting}
+
+\end{flushleft}
+
+\subsection{st70}
+\begin{flushleft}
+
+\includegraphics[width=4in, height=4in]{st70_optTour}
+
+\begin{lstlisting}[language=C]
+0   22  9
+22  15  10
+15  46  6
+46  36  10
+36  57  1
+57  49  9
+49  50  16
+50  55  9
+55  64  8
+64  63  20
+63  10  24
+10  47  9
+47  66  5
+66  53  13
+53  61  11
+61  32  18
+32  33  14
+33  20  1
+20  11  8
+11  59  9
+59  51  9
+51  9   6
+9   4   6
+4   52  9
+52  5   20
+5   40  6
+40  42  11
+42  16  4
+16  8   16
+8   39  11
+39  60  5
+60  38  9
+38  44  7
+44  24  8
+24  45  19
+45  26  6
+26  67  21
+67  43  4
+43  29  15
+29  19  7
+19  13  7
+13  27  14
+27  48  14
+48  54  8
+54  25  16
+25  7   8
+7   2   12
+2   31  6
+31  41  13
+41  17  6
+17  3   4
+3   1   9
+1   6   5
+6   18  11
+18  23  20
+23  14  4
+14  56  7
+56  62  14
+62  65  6
+65  21  6
+21  58  6
+58  37  8
+37  30  10
+30  68  2
+68  34  12
+34  69  14
+69  12  6
+12  28  2
+28  35  12
+35  0   4
+The cost of the best tour is: 675.0
+\end{lstlisting}
+
+\end{flushleft}
+
+\subsection{ulysses22}
+\begin{flushleft}
+
+\includegraphics[width=4in, height=4in]{ulysses_optTour}
+
+\begin{lstlisting}[language=C]
+0   7   60
+7   17  278
+17  3   37
+3   21  171
+21  16  148
+16  1   246
+1   2   126
+2   15  499
+15  20  486
+20  19  14
+19  18  33
+18  9   96
+9   8   328
+8   10  1387
+10  4   1504
+4   14  401
+14  5   308
+5   6   115
+6   11  177
+11  12  68
+12  13  52
+13  0   479
+The cost of the best tour is: 7013.0
+\end{lstlisting}
+
+\end{flushleft}
+
+
+\end{flushleft}
+
+
+
 
 Once we developed our algorithm for solving TSPBC,
 we looked to Python and the gurobipy module.
