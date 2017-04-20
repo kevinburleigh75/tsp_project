@@ -32,13 +32,14 @@
   tabsize=3
 }
 
-\section{Problem Description}
-\begin{flushleft}
+\section{Overview}
+
+\subsection{Problem Statement}
 
 We were tasked
 to solve the Traveling Salesman Problem
 using the branch-and-cut method,
-utilizing Gurobi
+utilizing gurobi
 to solve only linear programming relaxations
 of integer programs.
 
@@ -72,32 +73,56 @@ and then exited exactly once.
 This leaves open the possibilty of subtours,
 which are eliminated by the second set of constraints.
 
-\end{flushleft}
+\subsection{Approach}
 
-\section{Branch-and-Cut Control Code}
+The TSP can be solved
+by using the branch-and-cut variant
+of the branch-and-bound method.
 
-The algorithmic approach to solving TSPBC is as follows:
-1. Initialize a Gurobi model with input data and add to a priority queue.
-2. While the priority queue is not empty, pop a model off and set as current model
-3. Process the current model i.e. adding constraints, and create new branches
-4. For each new branch, add to priority queue
-Each step in the algorithm will be explored in further detail.
+Branch-and-bound divides a problem into subproblems,
+solves each subproblem,
+and then determines which, if any, of the subproblems
+could potentially yield a result
+which is better than the best-known result.
+Subproblems which cannot potentially yield improvements are discarded,
+leaving more time to investigate the other, more promising, subproblems.
 
-\subsection{Main Loop}
+In the case of an LP relaxation to an IP problem,
+branch-and-bound can be used to implement variable fixing,
+where some non-integral $x_e$ is forced to take on an intrgral value.
+In the case of the TSP, variable fixing results
+in one non-integral solution
+being turned into two subproblems,
+one for $x_e = 0$ and one for $x_e = 1$.
+
+Branch-and-cut works similarly to branch-and-bound,
+but helps to avoid the potentially exponental growth
+in the number of subproblems.  It does this by adding
+constraints (cuts) to models with non-integral $x_e$
+and re-optimizing them instead of automatically branching.
+If no new cuts can be found,
+branch-and-cut will degrade to normal branch-and-bound.
+
+Our solver consists of three main parts, which will be desribed in the following sections:
+\begin{enumerate}
+\item a \textit{solver} which manages branch-and-cut related activities
+\item a \textit{graph class} implements graph-related algorithms
+\item a collection of \textit{cut generating algorithms}
+\end{enumerate}
+
+\section{Solver}
+
+\subsection{Top-Level Solver}
 \begin{flushleft}
 
-The main control loop:
+The top-level solver
+creates the initial LP relaxation model
+and adds it to the model pool.
 
-\begin{enumerate}
-\item creates an initial model
-\item adds the initial model to the model pool
-\item until the model pool is empty:
-  \begin{enumerate}
-  \item removes a model from the pool
-  \item processes the model
-  \item adds any resulting new models (and their associated objective lower bounds) to the pool
-  \end{enumerate}
-\end{enumerate}
+Until the pool is empty,
+it pulls a model from the pool,
+processes it,
+and adds any resulting models into the pool.
 
 Processing ends when the model pool is empty.
 
@@ -116,7 +141,6 @@ class TspBranchAndCut(object):
 \end{lstlisting}
 
 \end{flushleft}
-
 
 \subsection{The Initial Model}
 \begin{flushleft}
@@ -313,6 +337,181 @@ class TspBranchAndCut(object):
 \end{lstlisting}
 
 \end{flushleft}
+
+\section{Graph Class}
+
+\subsection{Tour Detection}
+
+Tours are detected by:
+\begin{enumerate}
+  \item verifying that $x_e \in \{0,1\} \forall e \in E$
+  \item ensuring that every node has a degree of two
+  \item ensuring that there is only one connected component (no subtours)
+\end{enumerate}
+
+\begin{lstlisting}
+## graph.py
+class Graph(object)
+    def is_tour(self, solution):
+        ##
+        ## Check that the solution is a "binary" vector,
+        ## and that number of selected edges is the same as
+        ## the number of nodes
+        ##
+
+        num_selected_edges = 0
+        for idx,value in enumerate(solution):
+            if not value in [0.0,1.0]:
+                return False
+
+            if value == 1.0:
+                num_selected_edges += 1
+
+        if num_selected_edges != len(self.nodes):
+            return False
+
+        ##
+        ## Form a mapping from a node to nodes connected
+        ## by selected edges, and ensure that each node
+        ## has degree 2.
+        ##
+
+        selected_edges_by_node  = {node: set() for node in self.nodes}
+        for idx,value in enumerate(solution):
+            if value == 1.0:
+                edge = self.edge_by_idx[idx]
+                (node1,node2) = edge
+                selected_edges_by_node[node1].add(edge)
+                selected_edges_by_node[node2].add(edge)
+
+        for node,selected_edges in selected_edges_by_node.items():
+            if len(selected_edges) != 2:
+                return False
+
+        ##
+        ## Find all connected components.  If there is only one,
+        ## we have a tour.
+        ##
+
+        node_components, edge_components = self.binary_connected_components(solution)
+        if len(node_components) != 1:
+            return False
+
+        return True
+\end{lstlisting}
+
+\subsection{Connected Components}
+
+Connected components can be detected
+by doing a breadth-first search
+of previously-unseen nodes.
+When no unseen nodes can be reached,
+all seen nodes form a connected component.
+Nodes in the current connected component
+can be removed from the graph,
+and the process repeated,
+until every node belongs to a connected component.
+
+In our implementation,
+we return connected components
+in both node and edge forms.
+
+\begin{lstlisting}
+## graph.py
+class Graph(object)
+    def connected_components(self):
+        connected_components_nodes = []
+        connected_components_edges = []
+
+        unvisited_nodes = set(self.nodes)
+        while len(unvisited_nodes) != 0:
+            queue = deque([unvisited_nodes.pop()])
+
+            visited_nodes = set()
+            visited_edges = set()
+            while len(queue) != 0:
+                cur_node = queue.popleft()
+
+                if cur_node in unvisited_nodes:
+                    unvisited_nodes.remove(cur_node)
+
+                visited_nodes.add(cur_node)
+
+                for edge in self.edges_by_node[cur_node]:
+                    visited_edges.add(edge)
+
+                    (node1,node2) = edge
+                    if node1 not in visited_nodes:
+                        queue.append(node1)
+                    if node2 not in visited_nodes:
+                        queue.append(node2)
+
+            connected_components_nodes.append(visited_nodes)
+            connected_components_edges.append(visited_edges)
+
+        return connected_components_nodes, connected_components_edges
+\end{lstlisting}
+
+\subsection{Min-Cut}
+
+The Stoer-Wagner algorithm is used
+to find min-cuts in a graph.
+The algorithm works by repeatedly removing
+the "least attached" node (based on its cut)
+from the current graph
+by merging it with the next "least attached" node.
+When all nodes have been merged,
+the smallest encountered cut is the min-cut for the graph.
+
+In our variation of this algorithm,
+we accumulate all encountered cuts
+so that they can be processed
+using whatever cut threshold the caller wants.
+
+\begin{lstlisting}
+## graph.py
+class Graph(object)
+    def find_min_cut(self):
+        merged_graph = Graph(nodes=self.nodes, edges=self.edges, weight_by_edge=self.weight_by_edge)
+
+        min_cut_value = float("inf")
+        min_cut_nodes = []
+
+        all_cuts = []
+
+        while merged_graph.num_nodes > 1:
+
+            penultimate_node = None
+            last_node        = merged_graph.nodes[random.randint(0,len(merged_graph.nodes)-1)]
+
+            node_set = set([last_node])
+
+            while True:
+                new_node = merged_graph._find_next_connected_node(target_nodes=node_set)
+                if new_node is None:
+                    break
+                penultimate_node = last_node
+                last_node        = new_node
+                node_set.add(new_node)
+
+            current_cut_value = 0
+            current_cut_nodes = [last_node]
+            for other_node in merged_graph.nodes_by_node[last_node]:
+                current_cut_value += merged_graph.weight_by_edge[(last_node, other_node)]
+
+            merged_graph = merged_graph._merge_nodes(node1=penultimate_node, node2=last_node)
+
+            all_cuts.append((current_cut_value, [item for item in flatten(current_cut_nodes, list_or_tuple)]))
+
+            if current_cut_value < min_cut_value:
+                min_cut_value = current_cut_value
+                min_cut_nodes = current_cut_nodes
+
+        all_cuts = sorted(all_cuts, key=lambda x: x[0])
+
+        return all_cuts
+\end{lstlisting}
+
 
 \section{Constraint (Cut) Algorithms} \label{sec:constralgs}
 \begin{flushleft}
@@ -557,14 +756,62 @@ class TspBranchAndCut(object):
 
 \end{flushleft}
 
-\subsection{Gomory}
-\begin{flushleft}
+% \subsection{Gomory}
+% \begin{flushleft}
 
-\end{flushleft}
+% \end{flushleft}
 
 \end{flushleft}
 
 \section{Results}
+\begin{flushleft}
+
+The algorithms outlined above
+were able to solve all assigned TSP datasets.
+
+\begin{center}
+\begin{tabular}{ l r r }
+  dataset & time (sec) & optimal tour cost \\
+  \hline
+  att48 &     0.84 &  10628 \\
+  berlin22 &  0.06 &   7542 \\
+  gr21 &      0.01 &   2707 \\
+  hk48 &      0.49 &  11461 \\
+  pr76 &   4263.32 & 108159 \\
+  st70 &      4.24 &    675 \\
+  ulysses22 & 0.04 &   7013
+\end{tabular}
+\end{center}
+
+Images and details of each tour
+can be found in section \ref{sec:resultdetails}.
+
+\end{flushleft}
+
+\section{Future Improvements}
+
+Clearly there is room for improvement on dataset pr76.
+
+We performed an analysis to determine whether or not
+using the Held-Karp algorithm could drive models
+toward the optimum value more quickly,
+but the Held-Karp bounds on these datasets
+were not particularly close to the optima.
+
+We also implemented Gomory mixed-integer cuts,
+which were very successful on all datasets
+except pr76, which we suspect might be due
+to the accumulation of rounding errors.
+The Gomory cuts could solve all other datasets
+even with all other constraints removed
+(except, of course, integral subtour detection)
+quite quickly (on the order of a few seconds at most).
+The code for these cuts is included,
+though it was disabled for these runs.
+Using purely integer-based cuts might work better
+for this type of problem.
+
+\section{Result Details} \label{sec:resultdetails}
 \begin{flushleft}
 
 \subsection{att48}
