@@ -89,7 +89,7 @@ leaving more time to investigate the other, more promising, subproblems.
 
 In the case of an LP relaxation to an IP problem,
 branch-and-bound can be used to implement variable fixing,
-where some non-integral $x_e$ is forced to take on an intrgral value.
+where some non-integral $x_e$ is forced to take on an integral value.
 In the case of the TSP, variable fixing results
 in one non-integral solution
 being turned into two subproblems,
@@ -125,6 +125,10 @@ processes it,
 and adds any resulting models into the pool.
 
 Processing ends when the model pool is empty.
+
+(Note that code in listings may have been modified
+cosmetically for display purposes.  Refer to the
+accompanying source for full details.)
 
 \begin{lstlisting}
 ## tsp_solver.py
@@ -213,7 +217,7 @@ the current solution becomes the new best tour
 and processing stops.
 
 Otherwise the current solution
-either non-integral or not a tour,
+is either non-integral or not a tour,
 so, if possible, new constraints
 are added to the model
 (the 'cut' part of branch-and-cut)
@@ -688,7 +692,7 @@ if $k$ is odd.
 Equation \eqref{eq:combineq} is called the \textit{comb inequality}
 and can be used to find subtour constraint violations.
 
-The code is too incolved to show here,
+The code is too involved to show here,
 but details can be found in \cite{tspproblem},\cite{ico}.
 The following figures show combs found
 during the processing of datasets
@@ -777,7 +781,7 @@ and partly because it deals with the case
 of general lower- and upper-bounds on variables.
 
 The code worked fine on all datasets except pr76,
-where it resulted in a sub-optimal tour
+where it resulted in a sub-optimal tour.
 This was possibly due to accumulation of rounding errors,
 but steps were taken to mitigate that problem proved ineffective.
 
